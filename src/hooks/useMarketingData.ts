@@ -1,37 +1,68 @@
 import { useQuery } from '@tanstack/react-query';
 import { MarketingRecord, generateMockData } from '@/lib/mockData';
+import { getAggregatedState } from '@/lib/calculations';
 import { useAppContext } from '@/contexts/AppContext';
 import { useMemo } from 'react';
+import { getCache, setCache } from '@/lib/storage';
 
 const API_BASE = 'https://mosaicfellowship.in/api/data/marketing/daily';
 const PAGINATION_LIMIT = 500;
+const CONCURRENCY_LIMIT = 6;
+const CACHE_KEY = 'marketing_data_v1';
+const CACHE_TTL = 1000 * 3600 * 24; // 24 hours
 
 // Track the data source so the UI can display it
-let _dataSource: 'api' | 'mock' | 'loading' = 'loading';
+let _dataSource: 'api' | 'mock' | 'loading' | 'cached' = 'loading';
 
-async function fetchAllPages(): Promise<MarketingRecord[]> {
-  const allRecords: MarketingRecord[] = [];
-  let page = 1;
-  const maxPages = 50; // Safety limit to prevent infinite loops
+/**
+ * Fetches multiple pages in parallel with concurrency control
+ */
+async function fetchInChunks(totalPages: number): Promise<MarketingRecord[]> {
+  const results: MarketingRecord[][] = [];
+  const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2); // Pages 2..N
 
-  while (page <= maxPages) {
-    const res = await fetch(`${API_BASE}?page=${page}&limit=${PAGINATION_LIMIT}`);
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
-    const json = await res.json();
-
-    // Real API returns { data: [...], pagination: { has_next: bool, ... } }
-    const records: MarketingRecord[] = Array.isArray(json) ? json : json.data ?? json.results ?? [];
-    if (!Array.isArray(records) || records.length === 0) break;
-
-    allRecords.push(...records);
-
-    // Use API's pagination.has_next flag — more reliable than checking record count
-    const hasNext = json.pagination?.has_next ?? (records.length === PAGINATION_LIMIT);
-    if (!hasNext) break;
-    page++;
+  for (let i = 0; i < pages.length; i += CONCURRENCY_LIMIT) {
+    const chunk = pages.slice(i, i + CONCURRENCY_LIMIT);
+    const chunkResults = await Promise.all(
+      chunk.map(async (page) => {
+        const res = await fetch(`${API_BASE}?page=${page}&limit=${PAGINATION_LIMIT}`);
+        if (!res.ok) throw new Error(`API error on page ${page}: ${res.status}`);
+        const json = await res.json();
+        return Array.isArray(json) ? json : json.data ?? json.results ?? [];
+      })
+    );
+    results.push(...chunkResults);
   }
 
-  if (allRecords.length === 0) throw new Error('No data returned');
+  return results.flat();
+}
+
+async function fetchAllPages(): Promise<MarketingRecord[]> {
+  const start = performance.now();
+  
+  // 1. Fetch first page to get metadata
+  const res = await fetch(`${API_BASE}?page=1&limit=${PAGINATION_LIMIT}`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  const firstPageJson = await res.json();
+  
+  const firstPageRecords: MarketingRecord[] = Array.isArray(firstPageJson) 
+    ? firstPageJson 
+    : firstPageJson.data ?? firstPageJson.results ?? [];
+  
+  if (firstPageRecords.length === 0) throw new Error('No data returned');
+
+  const totalPages = firstPageJson.pagination?.total_pages ?? 1;
+  const allRecords = [...firstPageRecords];
+
+  // 2. Fetch remaining pages in parallel
+  if (totalPages > 1) {
+    const remaining = await fetchInChunks(totalPages);
+    allRecords.push(...remaining);
+  }
+
+  const end = performance.now();
+  console.log(`[Pulse] Fetched ${allRecords.length} records across ${totalPages} pages in ${((end - start) / 1000).toFixed(2)}s`);
+  
   return allRecords;
 }
 
@@ -39,12 +70,27 @@ export function useMarketingData() {
   const query = useQuery<MarketingRecord[]>({
     queryKey: ['marketing-data'],
     queryFn: async () => {
+      // 1. Try Cache First
+      const cached = await getCache<MarketingRecord[]>(CACHE_KEY);
+      if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+        console.log('[Pulse] Loading from IndexedDB Cache');
+        _dataSource = 'cached';
+        return cached.data;
+      }
+
+      // 2. Try API
       try {
         const data = await fetchAllPages();
         _dataSource = 'api';
+        
+        // Save to cache (fire and forget)
+        setCache(CACHE_KEY, data).catch(err => console.error('Cache save failed:', err));
+        
         return data;
-      } catch {
-        console.warn('API unavailable, using mock data');
+      } catch (err) {
+        console.warn('API/Cache unavailable, using mock data:', err);
+        
+        // Final fallback to mock data
         _dataSource = 'mock';
         return generateMockData();
       }
@@ -54,6 +100,11 @@ export function useMarketingData() {
   });
 
   const { dateFilter } = useAppContext();
+
+  const aggregate = useMemo(() => {
+    if (!query.data) return undefined;
+    return getAggregatedState(query.data);
+  }, [query.data]);
 
   const filteredData = useMemo(() => {
     if (!query.data) return undefined;
@@ -74,5 +125,5 @@ export function useMarketingData() {
     });
   }, [query.data, dateFilter]);
 
-  return { ...query, data: filteredData, dataSource: query.data ? _dataSource : 'loading' };
+  return { ...query, data: filteredData, aggregate, dataSource: query.data ? _dataSource : 'loading' };
 }

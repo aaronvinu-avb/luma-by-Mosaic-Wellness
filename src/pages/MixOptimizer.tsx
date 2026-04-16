@@ -26,7 +26,7 @@ import {
   AlertTriangle,
   Sparkles
 } from "lucide-react";
-import { getMixOptimization, ObjectiveType } from '@/lib/lagrangeOptimizer';
+
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import { Slider } from '@/components/ui/slider';
@@ -63,7 +63,7 @@ const tooltipStyle = {
 };
 
 export default function MixOptimizer() {
-  const { data, isLoading } = useMarketingData();
+  const { data, aggregate, isLoading } = useMarketingData();
   const [budget, setBudget] = useState(5000000);
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [paused, setPaused] = useState<Set<string>>(new Set());
@@ -73,10 +73,10 @@ export default function MixOptimizer() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth()); // 0..11
 
   // ── Data derivations ──────────────────────────────────────────────────────
-  const summaries = useMemo(() => data ? getChannelSummaries(data) : [], [data]);
-  const models = useMemo(() => data ? getChannelSaturationModels(data) : [], [data]);
-  const seasonality = useMemo(() => data ? getSeasonalityMetrics(data) : [], [data]);
-  const dowMetrics = useMemo(() => data ? getDayOfWeekMetrics(data) : [], [data]);
+  const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
+  const models = useMemo(() => (aggregate || data) ? getChannelSaturationModels(aggregate || data!) : [], [data, aggregate]);
+  const seasonality = useMemo(() => (aggregate || data) ? getSeasonalityMetrics(aggregate || data!) : [], [data, aggregate]);
+  const dowMetrics = useMemo(() => (aggregate || data) ? getDayOfWeekMetrics(aggregate || data!) : [], [data, aggregate]);
 
   const roasMap = useMemo(() => {
     const m: Record<string, number> = {};

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { ChannelName } from '@/components/ChannelName';
-import { getChannelSummaries, getMonthlyAggregation, getChannelSaturationModels, getOptimalAllocationNonLinear, projectRevenue } from '@/lib/calculations';
+import { getChannelSummaries, getMonthlyAggregation, getChannelSaturationModels, getOptimalAllocationNonLinear, projectRevenue, getTimeFrameMonths } from '@/lib/calculations';
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS } from '@/lib/mockData';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
@@ -12,12 +12,12 @@ import { exportToCSV } from '@/lib/exportData';
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
 
 export default function Overview() {
-  const { data, isLoading, error, refetch, dataSource } = useMarketingData();
+  const { data, aggregate, isLoading, error, refetch, dataSource } = useMarketingData();
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
 
-  const summaries = useMemo(() => data ? getChannelSummaries(data) : [], [data]);
-  const monthly = useMemo(() => data ? getMonthlyAggregation(data) : {}, [data]);
+  const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
+  const monthly = useMemo(() => (aggregate || data) ? getMonthlyAggregation(aggregate || data!) : {}, [data, aggregate]);
 
   const totals = useMemo(() => {
     const s = summaries.reduce((a, c) => ({
@@ -35,13 +35,9 @@ export default function Overview() {
     return rev2024 > 0 ? ((rev2025 - rev2024) / rev2024) * 100 : 0;
   }, [data]);
 
-  const models = useMemo(() => data ? getChannelSaturationModels(data) : [], [data]);
+  const models = useMemo(() => (aggregate || data) ? getChannelSaturationModels(aggregate || data!) : [], [data, aggregate]);
 
-  const timeFrameMonths = useMemo(() => {
-    if (!data || data.length === 0) return 36;
-    const dates = new Set(data.map(r => r.date));
-    return Math.max(1, dates.size / 30.4);
-  }, [data]);
+  const timeFrameMonths = useMemo(() => getTimeFrameMonths(aggregate || data || []), [data, aggregate]);
 
   const avgMonthlySpend = totals.spend / timeFrameMonths;
 
@@ -107,11 +103,17 @@ export default function Overview() {
             {dataSource !== 'loading' && (
               <span style={{
                 fontFamily: 'Outfit', fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
-                backgroundColor: dataSource === 'api' ? 'rgba(52,211,153,0.12)' : 'rgba(251,191,36,0.15)',
-                color: dataSource === 'api' ? '#34D399' : '#FBBF24',
+                backgroundColor: dataSource === 'api' ? 'rgba(52,211,153,0.12)' : 
+                               dataSource === 'cached' ? 'rgba(96,165,250,0.12)' : 
+                               'rgba(251,191,36,0.15)',
+                color: dataSource === 'api' ? '#34D399' : 
+                       dataSource === 'cached' ? '#60A5FA' : 
+                       '#FBBF24',
                 textTransform: 'uppercase', letterSpacing: '0.08em',
               }}>
-                {dataSource === 'api' ? 'LIVE API' : 'MOCK DATA'}
+                {dataSource === 'api' ? 'LIVE API' : 
+                 dataSource === 'cached' ? 'LOCAL CACHE' : 
+                 'MOCK DATA'}
               </span>
             )}
           </h1>

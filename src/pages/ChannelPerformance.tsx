@@ -3,7 +3,7 @@ import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { MiniSparkline } from '@/components/MiniSparkline';
 import { ChannelName } from '@/components/ChannelName';
-import { getChannelSummaries, getDailySparkline, getChannelSaturationModels, projectRevenue } from '@/lib/calculations';
+import { getChannelSummaries, getDailySparkline, getChannelSaturationModels, projectRevenue, getTimeFrameMonths } from '@/lib/calculations';
 import { SpendEfficiencyMatrix } from '@/components/SpendEfficiencyMatrix';
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
@@ -33,11 +33,11 @@ const CustomLegend = ({ payload }: any) => (
 );
 
 export default function ChannelPerformance() {
-  const { data, isLoading } = useMarketingData();
+  const { data, aggregate, isLoading } = useMarketingData();
   const [sortKey, setSortKey] = useState<SortKey>('roas');
   const [sortAsc, setSortAsc] = useState(false);
 
-  const summaries = useMemo(() => data ? getChannelSummaries(data) : [], [data]);
+  const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
 
   const sorted = useMemo(() => {
     const s = [...summaries];
@@ -49,16 +49,17 @@ export default function ChannelPerformance() {
     return s;
   }, [summaries, sortKey, sortAsc]);
 
-  const models = useMemo(() => data ? getChannelSaturationModels(data) : [], [data]);
+  const models = useMemo(() => (aggregate || data) ? getChannelSaturationModels(aggregate || data!) : [], [data, aggregate]);
 
   const diminishingData = useMemo(() => {
     const multipliers = [0.5, 1, 1.5, 2, 2.5, 3];
+    const timeFrameMonths = getTimeFrameMonths(aggregate || data || []);
     return multipliers.map(mult => {
       const row: Record<string, number | string> = { multiplier: `${mult}x` };
       for (const s of summaries) {
         const model = models.find(m => m.channel === s.channel);
         if (model) {
-          const spend = (s.totalSpend / 36) * mult; // Use avg monthly spend for the model
+          const spend = (s.totalSpend / timeFrameMonths) * mult; // Use avg monthly spend for the model
           const rev = projectRevenue(model, spend);
           row[s.channel] = spend > 0 ? rev / spend : 0;
         } else {
