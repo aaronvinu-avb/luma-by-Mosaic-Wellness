@@ -8,6 +8,7 @@ import {
 } from '@/lib/calculations';
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
+import { ChannelName } from '@/components/ChannelName';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   Cell, Legend, PieChart, Pie, AreaChart, Area
@@ -41,6 +42,7 @@ export default function FinancialInsights() {
     const totalNew = summaries.reduce((s, c) => s + c.newCustomers, 0);
     return totalNew > 0 ? totals.spend / totalNew : 0;
   }, [summaries, totals]);
+  const portfolioRoi = totals.spend > 0 ? (totals.profit / totals.spend) * 100 : 0;
   const sortedFinancialsByPayback = useMemo(
     () => [...financials].sort((a, b) => a.paybackDays - b.paybackDays),
     [financials]
@@ -111,7 +113,7 @@ export default function FinancialInsights() {
         <div className="financial-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginBottom: 20 }}>
           {[
             { label: 'Net Contribution', value: formatINRCompact(totals.profit), sub: 'Modeled post-marketing profit', icon: TrendingUp, color: '#34D399' },
-            { label: 'Portfolio ROI', value: `${((totals.profit / totals.spend) * 100).toFixed(1)}%`, sub: 'Efficiency multiplier', icon: ArrowUpRight, color: '#E8803A' },
+            { label: 'Portfolio ROI', value: `${portfolioRoi.toFixed(1)}%`, sub: 'Efficiency multiplier', icon: ArrowUpRight, color: '#E8803A' },
           ].map((s, i) => (
             <div key={`est-${i}`} style={{ backgroundColor: 'rgba(232, 128, 58, 0.03)', border: '1px dashed rgba(232, 128, 58, 0.3)', borderRadius: 16, padding: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -145,7 +147,9 @@ export default function FinancialInsights() {
                   const ltvCac = f.cac > 0 ? f.ltv / f.cac : 0;
                   return (
                     <tr key={f.channel} style={{ borderBottom: i === financials.length - 1 ? 'none' : '1px solid var(--border-subtle)' }}>
-                      <td style={{ padding: '14px 20px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{f.channel}</td>
+                      <td style={{ padding: '14px 20px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        <ChannelName channel={f.channel} />
+                      </td>
                       <td style={{ padding: '14px 20px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)' }}>{formatINRCompact(f.spend)}</td>
                       <td style={{ padding: '14px 20px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600, color: f.profit > 0 ? '#34D399' : '#F87171' }}>{formatINRCompact(f.profit)}</td>
                       <td style={{ padding: '14px 20px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-primary)' }}>{formatINR(f.cac)}</td>

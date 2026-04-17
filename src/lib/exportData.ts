@@ -15,7 +15,8 @@ export function exportToCSV(data: Array<Record<string, unknown>>, filename: stri
   for (const row of data) {
     const values = headers.map(header => {
       const val = row[header];
-      const escaped = ('' + val).replace(/"/g, '""'); // Escape double quotes
+      const text = val == null ? '' : String(val);
+      const escaped = text.replace(/"/g, '""'); // Escape double quotes
       return `"${escaped}"`; // Wrap in quotes to handle commas within values
     });
     csvRows.push(values.join(','));
@@ -33,4 +34,5 @@ export function exportToCSV(data: Array<Record<string, unknown>>, filename: stri
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }

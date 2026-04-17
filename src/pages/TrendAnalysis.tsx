@@ -25,7 +25,7 @@ import { COMPETITOR_EVENTS } from '@/lib/mockData';
 import { LazySection } from '@/components/LazySection';
 
 type Metric = 'roas' | 'revenue' | 'spend';
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DOW_TO_DAY: Record<string, string> = {
   Mon: 'Mon',
   Tue: 'Tue',
@@ -215,8 +215,8 @@ export default function TrendAnalysis() {
     return c.revenue / c.spend;
   };
   const allRoasValues = CHANNELS.flatMap(ch => DAYS.map(d => getCellRoas(ch, d))).filter(v => v > 0);
-  const minRoas = Math.min(...allRoasValues);
-  const maxRoas = Math.max(...allRoasValues);
+  const minRoas = allRoasValues.length > 0 ? Math.min(...allRoasValues) : 0;
+  const maxRoas = allRoasValues.length > 0 ? Math.max(...allRoasValues) : 0;
 
   const heatColor = (roas: number) => {
     if (maxRoas === minRoas) return 'rgba(52,211,153,0.3)';

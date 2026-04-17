@@ -35,8 +35,9 @@ export default function BestDays() {
       dowStats[d.dow].spend += d.spend;
       dowStats[d.dow].count++;
     });
-    const bestDowEntry = Object.entries(dowStats).sort((a, b) => (b[1].rev / b[1].spend) - (a[1].rev / a[1].spend))[0];
-    const bestDow = bestDowEntry ? `${bestDowEntry[0]} · ${(bestDowEntry[1].rev / bestDowEntry[1].spend).toFixed(1)}x ROAS` : '';
+    const safeRoas = (rev: number, spend: number) => (spend > 0 ? rev / spend : 0);
+    const bestDowEntry = Object.entries(dowStats).sort((a, b) => safeRoas(b[1].rev, b[1].spend) - safeRoas(a[1].rev, a[1].spend))[0];
+    const bestDow = bestDowEntry ? `${bestDowEntry[0]} · ${safeRoas(bestDowEntry[1].rev, bestDowEntry[1].spend).toFixed(1)}x ROAS` : '';
 
     const monthStats: Record<string, { rev: number; count: number }> = {};
     days.forEach(d => {
@@ -46,7 +47,7 @@ export default function BestDays() {
       monthStats[m].count++;
     });
     const bestMonthEntry = Object.entries(monthStats).sort((a, b) => b[1].rev - a[1].rev)[0];
-    const bestMonth = bestMonthEntry ? `${bestMonthEntry[0]} · ₹${formatINRCompact(bestMonthEntry[1].rev)} total` : '';
+    const bestMonth = bestMonthEntry ? `${bestMonthEntry[0]} · ${formatINRCompact(bestMonthEntry[1].rev)} total` : '';
 
     const peakDates = new Set(bestDays.map(d => d.date));
     const chRevOnPeaks: Record<string, number> = {};
@@ -93,7 +94,7 @@ export default function BestDays() {
                   padding: '3px 10px', borderRadius: 999,
                 }}>{row.dow}</span>
               </td>
-              <td style={{ padding: '10px 14px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-primary)' }}>₹{formatINRCompact(row.revenue)}</td>
+              <td style={{ padding: '10px 14px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-primary)' }}>{formatINRCompact(row.revenue)}</td>
               <td style={{ padding: '10px 14px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: '#FB923C', fontWeight: 600 }}>{row.roas.toFixed(1)}x</td>
             </tr>
           ))}
@@ -102,9 +103,12 @@ export default function BestDays() {
     </div>
   );
 
+  const [bestDowName = '—', bestDowDetail = ''] = bestDow ? bestDow.split(' · ') : ['—', ''];
+  const [bestMonthName = '—', bestMonthDetail = ''] = bestMonth ? bestMonth.split(' · ') : ['—', ''];
+
   const insights = [
-    { label: 'Best Day of Week', value: bestDow.split(' · ')[0], sub: bestDow.split(' · ')[1] || '' },
-    { label: 'Best Month', value: bestMonth.split(' · ')[0], sub: bestMonth.split(' · ')[1] || '' },
+    { label: 'Best Day of Week', value: bestDowName, sub: bestDowDetail },
+    { label: 'Best Month', value: bestMonthName, sub: bestMonthDetail },
     { label: 'Best Channel on Peak Days', value: bestChannelOnPeaks, sub: 'highest revenue on top 10 days' },
   ];
 

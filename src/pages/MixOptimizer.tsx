@@ -74,6 +74,7 @@ export default function MixOptimizer() {
   const [selectedChannel, setSelectedChannel] = useState<string>(CHANNELS[0]);
   const [activeTab, setActiveTab] = useState<'optimizer' | 'insights' | 'curves'>('optimizer');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth()); // 0..11
+  const safeBudget = Number.isFinite(budget) ? Math.max(0, budget) : 0;
 
   // ── Data derivations ──────────────────────────────────────────────────────
   const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
@@ -166,8 +167,8 @@ export default function MixOptimizer() {
 
   // Optimal fractions via non-linear model (Context-Aware)
   const optimalFractions = useMemo(() =>
-    models.length > 0 ? getOptimalAllocationNonLinear(models, budget, paused, monthMultipliers) : {},
-  [models, budget, paused, monthMultipliers]);
+    models.length > 0 ? getOptimalAllocationNonLinear(models, safeBudget, paused, monthMultipliers) : {},
+  [models, safeBudget, paused, monthMultipliers]);
 
   // Pre-computed scenario projections (Context-Aware)
   const scenarioResults = useMemo(() =>
@@ -183,11 +184,11 @@ export default function MixOptimizer() {
       const model = modelByChannel[ch];
       if (!model) return s;
       const mult = monthMultipliers[ch] || 1.0;
-      return s + projectRevenue(model, (effectiveAlloc[ch] || 0) * budget, mult);
+      return s + projectRevenue(model, (effectiveAlloc[ch] || 0) * safeBudget, mult);
     }, 0);
-  }, [effectiveAlloc, budget, models, monthMultipliers, modelByChannel]);
+  }, [effectiveAlloc, safeBudget, models, monthMultipliers, modelByChannel]);
 
-  const projectedROAS = budget > 0 ? projectedRevenue / budget : 0;
+  const projectedROAS = safeBudget > 0 ? projectedRevenue / safeBudget : 0;
 
   const optimalRevenue = useMemo(() => {
     if (models.length === 0) return 0;
@@ -195,9 +196,9 @@ export default function MixOptimizer() {
       const model = modelByChannel[ch];
       if (!model) return s;
       const mult = monthMultipliers[ch] || 1.0;
-      return s + projectRevenue(model, (optimalFractions[ch] || 0) * budget, mult);
+      return s + projectRevenue(model, (optimalFractions[ch] || 0) * safeBudget, mult);
     }, 0);
-  }, [optimalFractions, budget, models, monthMultipliers, modelByChannel]);
+  }, [optimalFractions, safeBudget, models, monthMultipliers, modelByChannel]);
 
   const revenueGap = Math.max(0, optimalRevenue - projectedRevenue);
   const totalPct = useMemo(() => CHANNELS.reduce((s, ch) => s + (alloc[ch] || 0), 0), [alloc]);
@@ -205,19 +206,19 @@ export default function MixOptimizer() {
   // ── Insight generation ────────────────────────────────────────────────────
   const insights = useMemo(() =>
     summaries.length > 0 && models.length > 0
-      ? generateChannelInsights(summaries, models, seasonality, dowMetrics, budget, optimalFractions, effectiveAlloc)
+      ? generateChannelInsights(summaries, models, seasonality, dowMetrics, safeBudget, optimalFractions, effectiveAlloc)
       : [],
-  [summaries, models, seasonality, dowMetrics, budget, optimalFractions, effectiveAlloc]);
+  [summaries, models, seasonality, dowMetrics, safeBudget, optimalFractions, effectiveAlloc]);
 
   // ── Marginal ROAS curve for selected channel ──────────────────────────────
   const marginalCurveData = useMemo(() => {
     const model = modelByChannel[selectedChannel];
     if (!model) return [];
-    const currentSpend = (effectiveAlloc[selectedChannel] || 0) * budget;
+    const currentSpend = (effectiveAlloc[selectedChannel] || 0) * safeBudget;
     return getMarginalROASCurve(model, Math.max(currentSpend * 2, 3000000), 40);
-  }, [selectedChannel, effectiveAlloc, budget, modelByChannel]);
+  }, [selectedChannel, effectiveAlloc, safeBudget, modelByChannel]);
 
-  const currentChannelSpend = (effectiveAlloc[selectedChannel] || 0) * budget;
+  const currentChannelSpend = (effectiveAlloc[selectedChannel] || 0) * safeBudget;
 
   // ── Comparison bar chart data ─────────────────────────────────────────────
   const comparisonData = useMemo(() =>
@@ -283,14 +284,14 @@ export default function MixOptimizer() {
             const model = modelByChannel[ch];
             const currentAllocation = effectiveAlloc[ch] || 0;
             const optimalAllocation = optimalFractions[ch] || 0;
-            const currentRevenue = model ? projectRevenue(model, currentAllocation * budget, monthMultipliers[ch] || 1.0) : 0;
-            const optimalRevenue = model ? projectRevenue(model, optimalAllocation * budget, monthMultipliers[ch] || 1.0) : 0;
+            const currentRevenue = model ? projectRevenue(model, currentAllocation * safeBudget, monthMultipliers[ch] || 1.0) : 0;
+            const optimalRevenue = model ? projectRevenue(model, optimalAllocation * safeBudget, monthMultipliers[ch] || 1.0) : 0;
             return {
             Channel: ch,
             'Current Allocation (%)': (currentAllocation * 100).toFixed(1),
             'AI Optimal Allocation (%)': (optimalAllocation * 100).toFixed(1),
-            'Current Spend': (currentAllocation * budget).toFixed(0),
-            'Optimal Spend': (optimalAllocation * budget).toFixed(0),
+            'Current Spend': (currentAllocation * safeBudget).toFixed(0),
+            'Optimal Spend': (optimalAllocation * safeBudget).toFixed(0),
             'Current Revenue': currentRevenue.toFixed(0),
             'Optimal Revenue': optimalRevenue.toFixed(0)
             };
@@ -352,11 +353,16 @@ export default function MixOptimizer() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 8, padding: '6px 14px' }}>
           <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>₹</span>
           <input
-            type="number" value={budget}
-            onChange={e => { setBudget(Number(e.target.value)); setActivePill(-1); }}
+            type="number" value={safeBudget}
+            min={0}
+            onChange={e => {
+              const parsed = Number(e.target.value);
+              setBudget(Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
+              setActivePill(-1);
+            }}
             style={{ width: 120, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'Plus Jakarta Sans', fontSize: 14, color: 'var(--text-primary)' }}
           />
-          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>({formatINRCompact(budget)})</span>
+          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>({formatINRCompact(safeBudget)})</span>
         </div>
       </div>
 
@@ -416,9 +422,9 @@ export default function MixOptimizer() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {CHANNELS.map((ch, ci) => {
                 const pct = Math.round((alloc[ch] || 0) * 100);
-                const amt = (effectiveAlloc[ch] || 0) * budget;
+                const amt = (effectiveAlloc[ch] || 0) * safeBudget;
                 const model = modelByChannel[ch];
-                const projRev = model ? projectRevenue(model, amt) : amt * (roasMap[ch] || 0);
+                const projRev = model ? projectRevenue(model, amt, monthMultipliers[ch] || 1.0) : amt * (roasMap[ch] || 0);
                 const optPct = Math.round((optimalFractions[ch] || 0) * 100);
                 const isPaused = paused.has(ch);
                 const color = CHANNEL_COLORS[ci];

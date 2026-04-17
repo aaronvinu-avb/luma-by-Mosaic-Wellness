@@ -15,8 +15,53 @@ interface UseMarketingDataOptions {
   includeGlobalAggregate?: boolean;
 }
 
-// Track the data source so the UI can display it
-let _dataSource: 'api' | 'mock' | 'loading' | 'cached' = 'loading';
+type DataSource = 'api' | 'mock' | 'loading' | 'cached';
+type MarketingDataResult = { records: MarketingRecord[]; source: DataSource };
+
+function toLocalDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function normalizeRecord(input: unknown): MarketingRecord | null {
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.date !== 'string' || typeof raw.channel !== 'string' || typeof raw.day_of_week !== 'string') {
+    return null;
+  }
+
+  return {
+    date: raw.date,
+    day_of_week: raw.day_of_week,
+    channel: raw.channel,
+    spend: toNumber(raw.spend),
+    revenue: toNumber(raw.revenue),
+    roas: toNumber(raw.roas),
+    impressions: toNumber(raw.impressions),
+    clicks: toNumber(raw.clicks),
+    conversions: toNumber(raw.conversions),
+    new_customers: toNumber(raw.new_customers),
+    ctr: toNumber(raw.ctr),
+    cpc: toNumber(raw.cpc),
+    cpa: toNumber(raw.cpa),
+    aov: toNumber(raw.aov),
+  };
+}
+
+function normalizeRecords(records: unknown[]): MarketingRecord[] {
+  return records.map(normalizeRecord).filter((record): record is MarketingRecord => record !== null);
+}
 
 /**
  * Fetches multiple pages in parallel with concurrency control
@@ -72,32 +117,30 @@ async function fetchAllPages(): Promise<MarketingRecord[]> {
 
 export function useMarketingData(options: UseMarketingDataOptions = {}) {
   const { includeGlobalAggregate = false } = options;
-  const query = useQuery<MarketingRecord[]>({
+  const query = useQuery<MarketingDataResult>({
     queryKey: ['marketing-data'],
     queryFn: async () => {
       // 1. Try Cache First
       const cached = await getCache<MarketingRecord[]>(CACHE_KEY);
       if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
         console.log('[Luma] Loading from IndexedDB Cache');
-        _dataSource = 'cached';
-        return cached.data;
+        return { records: normalizeRecords(cached.data), source: 'cached' };
       }
 
       // 2. Try API
       try {
         const data = await fetchAllPages();
-        _dataSource = 'api';
+        const normalized = normalizeRecords(data);
         
         // Save to cache (fire and forget)
-        setCache(CACHE_KEY, data).catch(err => console.error('Cache save failed:', err));
+        setCache(CACHE_KEY, normalized).catch(err => console.error('Cache save failed:', err));
         
-        return data;
+        return { records: normalized, source: 'api' };
       } catch (err) {
         console.warn('API/Cache unavailable, using mock data:', err);
         
         // Final fallback to mock data
-        _dataSource = 'mock';
-        return generateMockData();
+        return { records: generateMockData(), source: 'mock' };
       }
     },
     staleTime: Infinity,
@@ -108,23 +151,23 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
   const { dateFilter } = useAppContext();
 
   const filteredData = useMemo(() => {
-    if (!query.data) return undefined;
-    if (dateFilter === 'all') return query.data;
+    if (!query.data?.records) return undefined;
+    if (dateFilter === 'all') return query.data.records;
 
-    const latestDataDate = query.data.reduce((maxDate, record) => (
+    const latestDataDate = query.data.records.reduce((maxDate, record) => (
       record.date > maxDate ? record.date : maxDate
-    ), query.data[0]?.date ?? '');
+    ), query.data.records[0]?.date ?? '');
     
     // String-based grouping/filtering for performance
     if (dateFilter === 'last30' || dateFilter === 'last90') {
       const days = dateFilter === 'last30' ? 30 : 90;
       const lastDate = new Date(latestDataDate);
       lastDate.setDate(lastDate.getDate() - days);
-      const cutoff = lastDate.toISOString().slice(0, 10);
-      return query.data.filter(r => r.date >= cutoff);
+      const cutoff = toLocalDateString(lastDate);
+      return query.data.records.filter(r => r.date >= cutoff);
     }
     
-    return query.data.filter(r => {
+    return query.data.records.filter(r => {
       if (dateFilter === '2023') return r.date.startsWith('2023');
       if (dateFilter === '2024') return r.date.startsWith('2024');
       if (dateFilter === '2025') return r.date.startsWith('2025');
@@ -135,8 +178,8 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
   // globalAggregate is derived from the full unfiltered history (for training/YoY)
   const globalAggregate = useMemo(() => {
     if (!includeGlobalAggregate) return undefined;
-    if (!query.data) return undefined;
-    return getAggregatedState(query.data);
+    if (!query.data?.records) return undefined;
+    return getAggregatedState(query.data.records);
   }, [query.data, includeGlobalAggregate]);
 
   // aggregate is always derived from the same data the pages see (for UI display)
@@ -150,6 +193,6 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
     data: filteredData,
     aggregate,
     globalAggregate,
-    dataSource: query.data ? _dataSource : 'loading'
+    dataSource: query.data ? query.data.source : 'loading'
   };
 }

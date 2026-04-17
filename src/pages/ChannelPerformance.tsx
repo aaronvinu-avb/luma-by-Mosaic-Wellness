@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { MiniSparkline } from '@/components/MiniSparkline';
@@ -99,6 +99,10 @@ export default function ChannelPerformance() {
     });
   }, [summaries, modelByChannel, timeFrameMonths]);
 
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
   if (isLoading) return <DashboardSkeleton />;
 
   const handleSort = (key: SortKey) => {
@@ -169,13 +173,15 @@ export default function ChannelPerformance() {
                     </td>
                     <td style={{ padding: '16px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINR(Math.round(s.cpa))}</td>
                     <td style={{ padding: '16px 16px' }}>
-                      {aggregate && aggregate.dailySeries[s.channel] && (
+                      {aggregate && aggregate.dailySeries[s.channel] ? (
                         <MiniSparkline 
                           data={aggregate.dailySeries[s.channel].slice(-7).map(d => d.roas)} 
                           color={CHANNEL_COLORS[CHANNELS.indexOf(s.channel)]} 
                           width={100} 
                           height={32} 
                         />
+                      ) : (
+                        <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>—</span>
                       )}
                     </td>
                   </tr>

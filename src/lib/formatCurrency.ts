@@ -16,8 +16,10 @@ export function formatINR(value: number): string {
 }
 
 export function formatINRCompact(value: number): string {
-  if (value >= 1_00_00_000) return `₹${(value / 1_00_00_000).toFixed(1)}Cr`;
-  if (value >= 1_00_000) return `₹${(value / 1_00_000).toFixed(1)}L`;
-  if (value >= 1_000) return `₹${(value / 1_000).toFixed(1)}K`;
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+  if (abs >= 1_00_00_000) return `${sign}₹${(abs / 1_00_00_000).toFixed(1)}Cr`;
+  if (abs >= 1_00_000) return `${sign}₹${(abs / 1_00_000).toFixed(1)}L`;
+  if (abs >= 1_000) return `${sign}₹${(abs / 1_000).toFixed(1)}K`;
   return formatINR(value);
 }

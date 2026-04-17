@@ -169,7 +169,7 @@ export default function Overview() {
             Channel: s.channel,
             Spend: s.totalSpend,
             Revenue: s.totalRevenue,
-            ROAS: (s.totalRevenue / s.totalSpend).toFixed(2),
+            ROAS: s.totalSpend > 0 ? (s.totalRevenue / s.totalSpend).toFixed(2) : '0.00',
             Customers: s.newCustomers,
             Conversions: s.conversions
           })), 'Luma_Channel_Performance')}
