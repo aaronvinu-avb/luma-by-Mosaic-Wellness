@@ -67,9 +67,10 @@ export function LandingPage() {
           }}
         >
           <svg width={ICON_SIZE} height={ICON_SIZE} viewBox="0 0 72 72" fill="none">
-            <circle cx="36" cy="36" r="30" fill="#2A2825" />
-            <path d="M24 21V51H31V37L45 51H54L38 33.5L52 21H42L31 30V21H24Z" fill="#E8763A" />
-            <circle cx="49.5" cy="21.5" r="3.2" fill="#4A4640" />
+            <rect x="12" y="12" width="48" height="48" rx="14" fill="#2A2825" />
+            <path d="M24 22V50H41V43.5H31.5V22H24Z" fill="#E8763A" />
+            <path d="M41 25C47 25 51.5 29.5 51.5 35.5C51.5 41.5 47 46 41 46" stroke="#E8763A" strokeWidth="4.4" strokeLinecap="round" fill="none" />
+            <circle cx="41" cy="46" r="3.1" fill="#4A4640" />
           </svg>
         </div>
 
