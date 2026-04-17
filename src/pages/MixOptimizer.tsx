@@ -21,7 +21,6 @@ import {
   TrendingUp,
   TrendingDown,
   Download,
-  Circle,
   Scissors,
   Pause,
   Clock,
@@ -39,7 +38,8 @@ import {
 } from 'recharts';
 import { exportToCSV } from '@/lib/exportData';
 
-type DurationMode = 'monthly' | 'quarterly' | 'halfYear' | 'annual' | 'custom';
+type PlanningPeriod = '1m' | '1q' | '6m' | '1y' | 'custom';
+type PlanningMode = 'conservative' | 'target' | 'aggressive';
 
 const BUDGET_SCENARIOS = [
   { label: 'Conservative ₹30L', value: 3000000, color: '#60A5FA' },
@@ -88,11 +88,10 @@ export default function MixOptimizer() {
   const [hasSetInitialBudget, setHasSetInitialBudget] = useState(false);
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [paused, setPaused] = useState<Set<string>>(new Set());
-  const [activePill, setActivePill] = useState(1);
   const [selectedChannel, setSelectedChannel] = useState<string>(CHANNELS[0]);
   const [activeTab, setActiveTab] = useState<'optimizer' | 'insights' | 'curves'>('optimizer');
-  const [durationMode, setDurationMode] = useState<DurationMode>('monthly');
-  const [selectedAnchorMonth, setSelectedAnchorMonth] = useState(currentMonthKey);
+  const [planningPeriod, setPlanningPeriod] = useState<PlanningPeriod>('1m');
+  const [planningMode, setPlanningMode] = useState<PlanningMode>('target');
   const [customStartMonth, setCustomStartMonth] = useState(currentMonthKey);
   const [customEndMonth, setCustomEndMonth] = useState(currentMonthKey);
   const safeBudget = Number.isFinite(budget) ? Math.max(0, budget) : 0;
@@ -154,31 +153,26 @@ export default function MixOptimizer() {
   }, [summaries, summaryByChannel]);
 
   const selectedRange = useMemo(() => {
-    const anchor = timelineMonths.find((m) => m.key === selectedAnchorMonth) || timelineMonths[timelineMonths.length - 1];
-    if (!anchor) return [];
-    if (durationMode === 'monthly') return [anchor];
-    if (durationMode === 'quarterly') {
-      const quarterStart = Math.floor(anchor.month / 3) * 3;
-      return timelineMonths.filter((m) => m.year === anchor.year && m.month >= quarterStart && m.month <= quarterStart + 2);
+    const startIdx = timelineMonths.findIndex((m) => m.key === currentMonthKey);
+    if (planningPeriod === 'custom') {
+      const customStartIdx = timelineMonths.findIndex((m) => m.key === customStartMonth);
+      const customEndIdx = timelineMonths.findIndex((m) => m.key === customEndMonth);
+      if (customStartIdx < 0 || customEndIdx < 0) return [];
+      const minIdx = Math.min(customStartIdx, customEndIdx);
+      const maxIdx = Math.max(customStartIdx, customEndIdx);
+      return timelineMonths.slice(minIdx, maxIdx + 1);
     }
-    if (durationMode === 'halfYear') {
-      const halfStart = anchor.month < 6 ? 0 : 6;
-      return timelineMonths.filter((m) => m.year === anchor.year && m.month >= halfStart && m.month <= halfStart + 5);
-    }
-    if (durationMode === 'annual') {
-      return timelineMonths.filter((m) => m.year === anchor.year);
-    }
-    const start = timelineMonths.find((m) => m.key === customStartMonth);
-    const end = timelineMonths.find((m) => m.key === customEndMonth);
-    if (!start || !end) return [anchor];
-    const startIdx = timelineMonths.findIndex((m) => m.key === start.key);
-    const endIdx = timelineMonths.findIndex((m) => m.key === end.key);
-    const minIdx = Math.min(startIdx, endIdx);
-    const maxIdx = Math.max(startIdx, endIdx);
-    return timelineMonths.slice(minIdx, maxIdx + 1);
-  }, [customEndMonth, customStartMonth, durationMode, selectedAnchorMonth, timelineMonths]);
+    const lengthByPeriod: Record<Exclude<PlanningPeriod, 'custom'>, number> = {
+      '1m': 1,
+      '1q': 3,
+      '6m': 6,
+      '1y': 12,
+    };
+    const periodLength = lengthByPeriod[planningPeriod];
+    if (startIdx < 0) return timelineMonths.slice(0, periodLength);
+    return timelineMonths.slice(startIdx, startIdx + periodLength);
+  }, [currentMonthKey, customEndMonth, customStartMonth, planningPeriod, timelineMonths]);
 
-  const rangeLookup = useMemo(() => new Set(selectedRange.map((m) => m.key)), [selectedRange]);
   const durationMonthCount = selectedRange.length || 1;
   const totalPlannedBudget = safeBudget * durationMonthCount;
 
@@ -220,10 +214,59 @@ export default function MixOptimizer() {
     return eff;
   }, [alloc, paused, activeChannels]);
 
-  // Optimal fractions via non-linear model (Context-Aware)
-  const optimalFractions = useMemo(() =>
+  // Base optimal fractions via non-linear model (Context-Aware)
+  const baseOptimalFractions = useMemo(() =>
     models.length > 0 ? getOptimalAllocationNonLinear(models, safeBudget, paused, averageMonthMultipliers) : {},
   [models, safeBudget, paused, averageMonthMultipliers]);
+
+  // Planning mode tunes concentration while preserving model output.
+  const optimalFractions = useMemo(() => {
+    if (planningMode === 'aggressive') {
+      const powered: Record<string, number> = {};
+      CHANNELS.forEach((ch) => {
+        const base = baseOptimalFractions[ch] || 0;
+        powered[ch] = Math.pow(base, 1.15);
+      });
+      const total = CHANNELS.reduce((sum, ch) => sum + (powered[ch] || 0), 0);
+      if (total > 0) {
+        CHANNELS.forEach((ch) => {
+          powered[ch] = (powered[ch] || 0) / total;
+        });
+        return powered;
+      }
+    }
+
+    const blendWeight = planningMode === 'conservative' ? 0.55 : 0.25;
+    const blended: Record<string, number> = {};
+    CHANNELS.forEach((ch) => {
+      const currentShare = effectiveAlloc[ch] || 0;
+      const optimalShare = baseOptimalFractions[ch] || 0;
+      blended[ch] = blendWeight * currentShare + (1 - blendWeight) * optimalShare;
+    });
+    const total = CHANNELS.reduce((sum, ch) => sum + (blended[ch] || 0), 0);
+    if (total > 0) {
+      CHANNELS.forEach((ch) => {
+        blended[ch] = (blended[ch] || 0) / total;
+      });
+      return blended;
+    }
+    return baseOptimalFractions;
+  }, [baseOptimalFractions, effectiveAlloc, planningMode]);
+
+  const planningFractions = useMemo(() => {
+    const optimalWeight = planningMode === 'conservative' ? 0.25 : planningMode === 'target' ? 0.55 : 0.8;
+    const next: Record<string, number> = {};
+    CHANNELS.forEach((ch) => {
+      next[ch] = (1 - optimalWeight) * (effectiveAlloc[ch] || 0) + optimalWeight * (optimalFractions[ch] || 0);
+    });
+    const total = CHANNELS.reduce((sum, ch) => sum + (next[ch] || 0), 0);
+    if (total > 0) {
+      CHANNELS.forEach((ch) => {
+        next[ch] = (next[ch] || 0) / total;
+      });
+    }
+    return next;
+  }, [effectiveAlloc, optimalFractions, planningMode]);
 
   // Pre-computed scenario projections (Context-Aware)
   const scenarioResults = useMemo(() =>
@@ -245,11 +288,11 @@ export default function MixOptimizer() {
         const model = modelByChannel[ch];
         if (!model) return sum;
         const mult = getMonthMultiplierFor(ch, monthPoint.month);
-        return sum + projectRevenue(model, (effectiveAlloc[ch] || 0) * safeBudget, mult);
+        return sum + projectRevenue(model, (planningFractions[ch] || 0) * safeBudget, mult);
       }, 0);
       return periodTotal + monthRevenue;
     }, 0);
-  }, [effectiveAlloc, getMonthMultiplierFor, modelByChannel, models.length, safeBudget, selectedRange]);
+  }, [getMonthMultiplierFor, modelByChannel, models.length, planningFractions, safeBudget, selectedRange]);
 
   const projectedROAS = totalPlannedBudget > 0 ? projectedRevenue / totalPlannedBudget : 0;
 
@@ -268,19 +311,19 @@ export default function MixOptimizer() {
 
   const revenueGap = Math.max(0, optimalRevenue - projectedRevenue);
   const durationLabel = useMemo(() => {
-    if (durationMode === 'monthly') return 'this month';
-    if (durationMode === 'quarterly') return 'this quarter';
-    if (durationMode === 'halfYear') return 'this half-year';
-    if (durationMode === 'annual') return 'this year';
+    if (planningPeriod === '1m') return 'this month';
+    if (planningPeriod === '1q') return 'this quarter';
+    if (planningPeriod === '6m') return 'this half-year';
+    if (planningPeriod === '1y') return 'this year';
     return selectedRange.length > 1 ? 'this selected period' : 'this month';
-  }, [durationMode, selectedRange.length]);
+  }, [planningPeriod, selectedRange.length]);
   const scenarioBudgetLabel = useMemo(() => {
-    if (durationMode === 'monthly') return 'Monthly Budget';
-    if (durationMode === 'quarterly') return 'Quarterly Budget';
-    if (durationMode === 'halfYear') return 'Half-Year Budget';
-    if (durationMode === 'annual') return 'Annual Budget';
+    if (planningPeriod === '1m') return 'Monthly Budget';
+    if (planningPeriod === '1q') return 'Quarterly Budget';
+    if (planningPeriod === '6m') return 'Half-Year Budget';
+    if (planningPeriod === '1y') return 'Annual Budget';
     return 'Period Budget';
-  }, [durationMode]);
+  }, [planningPeriod]);
   const totalPct = useMemo(() => CHANNELS.reduce((s, ch) => s + (alloc[ch] || 0), 0), [alloc]);
 
   // ── Insight generation ────────────────────────────────────────────────────
@@ -331,15 +374,6 @@ export default function MixOptimizer() {
   };
 
   if (isLoading) return <DashboardSkeleton />;
-
-  // ── Styles ────────────────────────────────────────────────────────────────
-  const pillStyle = (active: boolean) => ({
-    fontFamily: 'Plus Jakarta Sans' as const, fontSize: 12, fontWeight: 500 as const,
-    padding: '5px 12px', borderRadius: 6, cursor: 'pointer' as const, transition: '150ms',
-    backgroundColor: active ? 'var(--bg-card)' : 'var(--border-subtle)',
-    color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-    border: active ? '1px solid var(--border-strong)' : '1px solid var(--border-subtle)',
-  });
 
   const tabStyle = (active: boolean) => ({
     fontFamily: 'Outfit' as const, fontSize: 13, fontWeight: 600 as const,
@@ -405,151 +439,108 @@ export default function MixOptimizer() {
         </button>
       </div>
 
-      {/* Temporal Context Selector */}
-      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <p style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', whiteSpace: 'nowrap' }}>
-            Planning Context:
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            {[
-              { value: 'monthly', label: 'Monthly' },
-              { value: 'quarterly', label: 'Quarterly' },
-              { value: 'halfYear', label: 'Half-Year' },
-              { value: 'annual', label: 'Annual' },
-              { value: 'custom', label: 'Custom' },
-            ].map((mode) => (
-              <button
-                key={mode.value}
-                onClick={() => setDurationMode(mode.value as DurationMode)}
-                style={{
-                  fontFamily: 'Plus Jakarta Sans',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  padding: '10px 18px',
-                  borderRadius: 999,
-                  border: durationMode === mode.value ? '1px solid var(--border-strong)' : '1px solid var(--border-subtle)',
-                  backgroundColor: durationMode === mode.value ? 'var(--bg-root)' : 'var(--bg-card)',
-                  color: durationMode === mode.value ? 'var(--text-primary)' : 'var(--text-muted)',
-                  boxShadow: durationMode === mode.value ? 'var(--shadow-sm)' : 'none',
-                  cursor: 'pointer',
-                  transition: '150ms'
+      {/* Planning Context: Budget Planner Input Bar */}
+      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+              Monthly Budget
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 10, padding: '10px 12px' }}>
+              <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>₹</span>
+              <input
+                type="number"
+                value={safeBudget}
+                min={0}
+                onChange={(e) => {
+                  const parsed = Number(e.target.value);
+                  setBudget(Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
                 }}
-              >
-                {mode.label}
-              </button>
-            ))}
-          </div>
-          {durationMode === 'custom' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <select
-                value={customStartMonth}
-                onChange={(e) => setCustomStartMonth(e.target.value)}
-                style={{ backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 8, color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans', fontSize: 11, padding: '8px 10px' }}
-              >
-                {timelineMonths.map((m) => (
-                  <option key={`start-${m.key}`} value={m.key}>{`${monthNames[m.month]} ${m.year}`}</option>
-                ))}
-              </select>
-              <span style={{ fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-muted)' }}>to</span>
-              <select
-                value={customEndMonth}
-                onChange={(e) => setCustomEndMonth(e.target.value)}
-                style={{ backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 8, color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans', fontSize: 11, padding: '8px 10px' }}
-              >
-                {timelineMonths.map((m) => (
-                  <option key={`end-${m.key}`} value={m.key}>{`${monthNames[m.month]} ${m.year}`}</option>
-                ))}
-              </select>
+                style={{ flex: 1, minWidth: 110, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'Outfit', fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
+              />
             </div>
-          )}
-        </div>
-
-        <div style={{ position: 'relative' }}>
-          <div style={{ display: 'flex', gap: 18, overflowX: 'auto', paddingBottom: 6, paddingRight: 20 }}>
-            {Array.from({ length: timelineEndYear - timelineStartYear + 1 }, (_, yearOffset) => {
-              const year = timelineStartYear + yearOffset;
-              const yearMonths = timelineMonths.filter((m) => m.year === year);
-              return (
-                <div key={year} style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 360, flexShrink: 0, borderRight: year < timelineEndYear ? '1px solid var(--border-subtle)' : 'none', paddingRight: 14 }}>
-                  <p style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.08em' }}>
-                    {year}
-                  </p>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap' }}>
-                    {yearMonths.map((monthPoint) => {
-                      const isSelected = rangeLookup.has(monthPoint.key);
-                      const isPast = monthPoint.year < currentYear || (monthPoint.year === currentYear && monthPoint.month < currentMonth);
-                      const isAnchor = selectedAnchorMonth === monthPoint.key;
-                      return (
-                        <button
-                          key={monthPoint.key}
-                          onClick={() => {
-                            setSelectedAnchorMonth(monthPoint.key);
-                            if (durationMode === 'custom') {
-                              setCustomStartMonth(monthPoint.key);
-                              setCustomEndMonth(monthPoint.key);
-                            }
-                          }}
-                          style={{
-                            fontFamily: 'Plus Jakarta Sans',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            padding: '7px 11px',
-                            borderRadius: 8,
-                            whiteSpace: 'nowrap',
-                            border: isAnchor ? '1px solid var(--border-strong)' : isSelected ? '1px solid var(--border-subtle)' : '1px solid transparent',
-                            backgroundColor: isSelected ? 'var(--border-subtle)' : 'transparent',
-                            color: isPast && !isSelected ? 'var(--text-muted)' : 'var(--text-primary)',
-                            opacity: isPast && !isSelected ? 0.7 : 1,
-                            cursor: 'pointer',
-                            transition: '150ms'
-                          }}
-                        >
-                          {monthNames[monthPoint.month]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+            <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+              {formatINRCompact(safeBudget)} / month
+            </p>
           </div>
-          <div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              top: 0,
-              right: 0,
-              width: 36,
-              height: '100%',
-              pointerEvents: 'none',
-              background: 'linear-gradient(90deg, rgba(0,0,0,0), var(--bg-card))'
-            }}
-          />
-        </div>
-      </div>
 
-      {/* ── Budget selectors ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        {BUDGET_SCENARIOS.map((s, i) => (
-          <button key={i} onClick={() => { setBudget(s.value); setActivePill(i); }} style={pillStyle(activePill === i)} className="flex items-center gap-2">
-            <Circle size={8} fill={s.color} stroke="none" />
-            {`${s.label.split(' ')[0]} ${formatINRCompact(s.value * durationMonthCount)} (${durationMode === 'monthly' ? 'Monthly' : durationMode === 'quarterly' ? 'Quarterly' : durationMode === 'halfYear' ? 'Half-Year' : durationMode === 'annual' ? 'Annual' : `${durationMonthCount}M`})`}
-          </button>
-        ))}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 8, padding: '6px 14px' }}>
-          <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>₹</span>
-          <input
-            type="number" value={safeBudget}
-            min={0}
-            onChange={e => {
-              const parsed = Number(e.target.value);
-              setBudget(Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
-              setActivePill(-1);
-            }}
-            style={{ width: 120, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'Plus Jakarta Sans', fontSize: 14, color: 'var(--text-primary)' }}
-          />
-          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>({formatINRCompact(safeBudget)})</span>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+              Planning Period
+            </p>
+            <select
+              value={planningPeriod}
+              onChange={(e) => setPlanningPeriod(e.target.value as PlanningPeriod)}
+              style={{ width: '100%', backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 10, color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans', fontSize: 13, padding: '11px 12px' }}
+            >
+              <option value="1m">1 Month</option>
+              <option value="1q">1 Quarter</option>
+              <option value="6m">6 Months</option>
+              <option value="1y">1 Year</option>
+              <option value="custom">Custom</option>
+            </select>
+            {planningPeriod === 'custom' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <select
+                  value={customStartMonth}
+                  onChange={(e) => setCustomStartMonth(e.target.value)}
+                  style={{ flex: 1, backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 8, color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans', fontSize: 11, padding: '7px 8px' }}
+                >
+                  {timelineMonths.map((m) => (
+                    <option key={`start-${m.key}`} value={m.key}>{`${monthNames[m.month]} ${m.year}`}</option>
+                  ))}
+                </select>
+                <span style={{ fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-muted)' }}>to</span>
+                <select
+                  value={customEndMonth}
+                  onChange={(e) => setCustomEndMonth(e.target.value)}
+                  style={{ flex: 1, backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 8, color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans', fontSize: 11, padding: '7px 8px' }}
+                >
+                  {timelineMonths.map((m) => (
+                    <option key={`end-${m.key}`} value={m.key}>{`${monthNames[m.month]} ${m.year}`}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+              Planning Mode
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[
+                { value: 'conservative', label: 'Conservative' },
+                { value: 'target', label: 'Target' },
+                { value: 'aggressive', label: 'Aggressive' },
+              ].map((mode) => (
+                <button
+                  key={mode.value}
+                  onClick={() => setPlanningMode(mode.value as PlanningMode)}
+                  style={{
+                    fontFamily: 'Plus Jakarta Sans',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    padding: '10px 14px',
+                    borderRadius: 999,
+                    border: planningMode === mode.value ? '1px solid var(--border-strong)' : '1px solid var(--border-subtle)',
+                    backgroundColor: planningMode === mode.value ? 'var(--bg-root)' : 'transparent',
+                    color: planningMode === mode.value ? 'var(--text-primary)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    transition: '150ms'
+                  }}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-root)' }}>
+          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)' }}>
+            {`${selectedRange.length} month${selectedRange.length === 1 ? '' : 's'} at ${formatINRCompact(safeBudget)}/month = ${formatINRCompact(totalPlannedBudget)} total budget`}
+          </p>
         </div>
       </div>
 
