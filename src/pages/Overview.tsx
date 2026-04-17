@@ -137,7 +137,7 @@ export default function Overview() {
   ];
 
   return (
-    <div className="mobile-page overview-page" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px - 64px)', overflow: 'hidden' }}>
+    <div className="mobile-page overview-page" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'visible' }}>
       {/* Header */}
       <div className="overview-title-row" style={{ marginBottom: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
