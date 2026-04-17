@@ -12,7 +12,6 @@ import {
   buildMonthRange,
   buildMonthlyPlanFromData,
   getChannelCapsFromData,
-  getBestDaysByChannel,
 } from '@/lib/calculations';
 import {
   Sliders,
@@ -96,13 +95,6 @@ export default function MixOptimizer() {
   // ── Data derivations ──────────────────────────────────────────────────────
   const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
   const models = useMemo(() => (globalAggregate || data) ? getChannelSaturationModels(globalAggregate || data!) : [], [data, globalAggregate]);
-  const modelByChannel = useMemo(() => {
-    const map: Record<string, (typeof models)[number] | undefined> = {};
-    models.forEach((model) => {
-      map[model.channel] = model;
-    });
-    return map;
-  }, [models]);
   const summaryByChannel = useMemo(() => {
     const map: Record<string, (typeof summaries)[number] | undefined> = {};
     summaries.forEach((summary) => {
@@ -111,13 +103,6 @@ export default function MixOptimizer() {
     return map;
   }, [summaries]);
   const seasonality = useMemo(() => (globalAggregate || data) ? getSeasonalityMetrics(globalAggregate || data!) : [], [data, globalAggregate]);
-  const seasonalityByChannel = useMemo(() => {
-    const map: Record<string, (typeof seasonality)[number] | undefined> = {};
-    seasonality.forEach((entry) => {
-      map[entry.channel] = entry;
-    });
-    return map;
-  }, [seasonality]);
   const dowMetrics = useMemo(() => (aggregate || data) ? getDayOfWeekMetrics(aggregate || data!) : [], [data, aggregate]);
   const timeFrameMonths = useMemo(() => getTimeFrameMonths(aggregate || data || []), [aggregate, data]);
 
@@ -134,11 +119,6 @@ export default function MixOptimizer() {
     }
   }, [avgMonthlySpend, hasSetInitialBudget]);
 
-  const roasMap = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const s of summaries) m[s.channel] = s.roas;
-    return m;
-  }, [summaries]);
   const currentFractions = useMemo(() => {
     const totalSpend = summaries.reduce((sum, channel) => sum + channel.totalSpend, 0);
     const fractions: Record<string, number> = {};
@@ -164,7 +144,6 @@ export default function MixOptimizer() {
     });
     return map;
   }, [channelCaps]);
-  const bestDaysByChannel = useMemo(() => getBestDaysByChannel(globalAggregate || data || []), [globalAggregate, data]);
 
   // Initial equal split
   const alloc = useMemo(() => {
@@ -246,53 +225,6 @@ export default function MixOptimizer() {
     return 'Period Budget';
   }, [planningPeriod]);
   const totalPct = useMemo(() => CHANNELS.reduce((s, ch) => s + (alloc[ch] || 0), 0), [alloc]);
-  const showWorkRows = useMemo(() => {
-    return CHANNELS.map((ch) => {
-      const avgSeasonality =
-        selectedRange.length > 0
-          ? selectedRange.reduce((sum, point) => sum + (seasonalityByChannel[ch]?.monthlyIndex?.[point.month] ?? 1), 0) / selectedRange.length
-          : 1;
-      const avgDowMultiplier =
-        selectedRange.length > 0
-          ? selectedRange.reduce((sum, point) => {
-              const monthDays = new Date(point.year, point.month + 1, 0).getDate();
-              const dowWeights = Array.from({ length: 7 }, (_, dayIdx) => {
-                let count = 0;
-                for (let d = 1; d <= monthDays; d++) {
-                  const dt = new Date(point.year, point.month, d);
-                  if (dt.getDay() === dayIdx) count += 1;
-                }
-                return count / monthDays;
-              });
-              const dowIndex = dowMetrics.find((d) => d.channel === ch)?.dowIndex || Array(7).fill(1);
-              return sum + dowWeights.reduce((acc, w, idx) => acc + w * (dowIndex[idx] || 1), 0);
-            }, 0) / selectedRange.length
-          : 1;
-      const channelSpend = recommendedPlan.channelTotals[ch]?.spend || 0;
-      const channelRevenue = recommendedPlan.channelTotals[ch]?.revenue || 0;
-      const monthlySpend = durationMonthCount > 0 ? channelSpend / durationMonthCount : 0;
-      const monthlyRevenue = durationMonthCount > 0 ? channelRevenue / durationMonthCount : 0;
-      return {
-        channel: ch,
-        baseROAS: summaryByChannel[ch]?.roas || 0,
-        seasonality: avgSeasonality,
-        dow: avgDowMultiplier,
-        cap: channelCapByName[ch]?.capSpend ?? Infinity,
-        monthlySpend,
-        monthlyRevenue,
-        reason:
-          recommendedPlan.rows[0]?.cells[ch]?.reason ||
-          `${ch} allocation follows observed historical ROAS and month/day multipliers.`,
-      };
-    });
-  }, [selectedRange, seasonalityByChannel, dowMetrics, recommendedPlan.channelTotals, recommendedPlan.rows, durationMonthCount, summaryByChannel, channelCapByName]);
-  const channelAvgMonthlySpend = useMemo(() => {
-    const avg: Record<string, number> = {};
-    CHANNELS.forEach((ch) => {
-      avg[ch] = durationMonthCount > 0 ? (recommendedPlan.channelTotals[ch]?.spend || 0) / durationMonthCount : 0;
-    });
-    return avg;
-  }, [recommendedPlan.channelTotals, durationMonthCount]);
 
   // ── Insight generation ────────────────────────────────────────────────────
   const insights = useMemo(() =>
@@ -499,98 +431,6 @@ export default function MixOptimizer() {
           <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)' }}>
             {`${selectedRange.length} month${selectedRange.length === 1 ? '' : 's'} at ${formatINRCompact(safeBudget)} = ${formatINRCompact(totalPlannedBudget)} total budget`}
           </p>
-        </div>
-      </div>
-
-      {/* Month-by-month allocation plan */}
-      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, overflow: 'hidden' }}>
-        <div style={{ padding: '16px 20px 10px' }}>
-          <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
-            Month-by-Month Allocation Plan
-          </h2>
-          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            Data-driven monthly recommendations by channel. Green = above channel average, red = below.
-          </p>
-        </div>
-        <div style={{ overflowX: 'auto', borderTop: '1px solid var(--border-subtle)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1400 }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg-card)' }}>
-                <th style={{ padding: '10px 12px', textAlign: 'left', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Month</th>
-                {CHANNELS.map((ch) => (
-                  <th key={ch} style={{ padding: '10px 10px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-                    {ch}
-                  </th>
-                ))}
-                <th style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Month Total</th>
-                <th style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Expected Revenue</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recommendedPlan.rows.map((row) => (
-                <tr key={row.monthKey} style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                  <td style={{ padding: '10px 12px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{row.label}</td>
-                  {CHANNELS.map((ch) => {
-                    const cell = row.cells[ch];
-                    const avgSpend = channelAvgMonthlySpend[ch] || 0;
-                    const delta = avgSpend > 0 ? (cell.spend - avgSpend) / avgSpend : 0;
-                    const bg = delta > 0.06 ? 'rgba(52,211,153,0.10)' : delta < -0.06 ? 'rgba(248,113,113,0.10)' : 'transparent';
-                    const color = delta > 0.06 ? '#34D399' : delta < -0.06 ? '#F87171' : 'var(--text-secondary)';
-                    return (
-                      <td key={`${row.monthKey}-${ch}`} style={{ padding: '10px 10px', textAlign: 'right', fontFamily: 'Plus Jakarta Sans', fontSize: 11, backgroundColor: bg }}>
-                        <div style={{ color }}>{formatINRCompact(cell.spend)}</div>
-                        <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{cell.inSeason ? 'in-season' : 'off-season'}</div>
-                      </td>
-                    );
-                  })}
-                  <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {formatINRCompact(row.totalSpend)}
-                  </td>
-                  <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: '#34D399' }}>
-                    {formatINRCompact(row.totalRevenue)}
-                  </td>
-                </tr>
-              ))}
-              <tr style={{ borderTop: '1px solid var(--border-strong)', backgroundColor: 'var(--bg-root)' }}>
-                <td style={{ padding: '11px 12px', fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase' }}>Channel totals</td>
-                {CHANNELS.map((ch) => (
-                  <td key={`total-${ch}`} style={{ padding: '11px 10px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {formatINRCompact(recommendedPlan.channelTotals[ch]?.spend || 0)}
-                  </td>
-                ))}
-                <td style={{ padding: '11px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {formatINRCompact(recommendedPlan.totalSpend)}
-                </td>
-                <td style={{ padding: '11px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 800, color: '#34D399' }}>
-                  {formatINRCompact(recommendedPlan.totalRevenue)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Show your work */}
-      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 14, padding: '14px 16px' }}>
-        <h3 style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-          Allocation Inputs by Channel (Show Your Work)
-        </h3>
-        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
-          {showWorkRows.map((row) => (
-            <div key={row.channel} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', backgroundColor: 'var(--bg-root)' }}>
-              <p style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{row.channel}</p>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                Hist ROAS: {row.baseROAS.toFixed(2)}x | Seasonality: {row.seasonality.toFixed(2)}x | Day-of-week: {row.dow.toFixed(2)}x
-              </p>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                Cap: {Number.isFinite(row.cap) ? formatINRCompact(row.cap) : 'No cap from observed buckets'} | Best Days: {(bestDaysByChannel[row.channel] || []).join(', ')}
-              </p>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>
-                Rec Spend: {formatINRCompact(row.monthlySpend)}/month | Exp Rev: {formatINRCompact(row.monthlyRevenue)}/month
-              </p>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-secondary)', marginTop: 4 }}>{row.reason}</p>
-            </div>
-          ))}
         </div>
       </div>
 
@@ -937,6 +777,55 @@ export default function MixOptimizer() {
           </div>
         </div>
       )}
+
+      {/* Compact month-by-month plan summary */}
+      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 14, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 16px 8px' }}>
+          <h3 style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Monthly Plan Snapshot
+          </h3>
+          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            Quick view of each month with top 3 channel allocations.
+          </p>
+        </div>
+        <div style={{ overflowX: 'auto', borderTop: '1px solid var(--border-subtle)' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+            <thead>
+              <tr>
+                {['Month', 'Top Allocations', 'Spend', 'Revenue'].map((h) => (
+                  <th key={h} style={{ padding: '10px 12px', textAlign: h === 'Top Allocations' ? 'left' : 'right', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {recommendedPlan.rows.map((row) => {
+                const top3 = CHANNELS
+                  .map((ch) => ({ channel: ch, spend: row.cells[ch].spend }))
+                  .sort((a, b) => b.spend - a.spend)
+                  .slice(0, 3);
+                return (
+                  <tr key={row.monthKey} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                      {row.label}
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'left', fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)' }}>
+                      {top3.map((item) => `${item.channel}: ${formatINRCompact(item.spend)}`).join(' • ')}
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {formatINRCompact(row.totalSpend)}
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: '#34D399' }}>
+                      {formatINRCompact(row.totalRevenue)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
       
       {/* Footer Methodology Note */}
       <div className="flex items-start gap-2 p-4 rounded-xl mt-8" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', width: '100%' }}>
