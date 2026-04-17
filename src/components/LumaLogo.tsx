@@ -1,6 +1,5 @@
 const VH = 28;
 const ICON_SIZE = 20;
-const ICON_RADIUS = 9;
 
 interface LumaLogoProps {
   scale?: number;
@@ -16,9 +15,10 @@ export function LumaLogo({ scale = 1, showWordmark = true }: LumaLogoProps) {
       viewBox={`0 0 ${vw} ${VH}`}
       fill="none"
     >
-      <circle cx={10} cy={14} r={ICON_RADIUS} fill="#2A2825" />
-      <path d="M6.5 9.5V18.5H9V13L14 18.5H17.2L11.7 12.5L16.8 9.5H13.4L9 12V9.5H6.5Z" fill="#E8803A" />
-      <circle cx={16.3} cy={9.7} r={1.3} fill="#4A4640" />
+      <rect x={1} y={5} width={18} height={18} rx={5} fill="#2A2825" />
+      <path d="M6.5 9.5V18.5H13V16H9.5V9.5H6.5Z" fill="#E8803A" />
+      <path d="M13 10.5C15.3 10.5 17.2 12.4 17.2 14.7C17.2 17 15.3 18.9 13 18.9" stroke="#E8803A" strokeWidth={1.8} strokeLinecap="round" fill="none" />
+      <circle cx={13} cy={18.9} r={1.1} fill="#4A4640" />
       {showWordmark && (
         <text
           x={28}
@@ -41,9 +41,10 @@ export function LumaLogoIcon() {
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="none">
       <rect width={size} height={size} fill="var(--bg-root)" rx={4} />
-      <circle cx={16} cy={16} r={10} fill="#2A2825" />
-      <path d="M12 11V21H14.8V15.5L20 21H23.4L17.5 14.8L22.9 11H19.3L14.8 14.2V11H12Z" fill="#E8803A" />
-      <circle cx={22.2} cy={11.4} r={1.4} fill="#4A4640" />
+      <rect x={6} y={6} width={20} height={20} rx={6} fill="#2A2825" />
+      <path d="M11 10.5V21.5H18.2V18.7H14.1V10.5H11Z" fill="#E8803A" />
+      <path d="M18.3 12C21 12 23 14 23 16.7C23 19.4 21 21.4 18.3 21.4" stroke="#E8803A" strokeWidth={2} strokeLinecap="round" fill="none" />
+      <circle cx={18.3} cy={21.4} r={1.2} fill="#4A4640" />
     </svg>
   );
 }
