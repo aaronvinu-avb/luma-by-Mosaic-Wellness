@@ -531,6 +531,274 @@ export function getDayOfWeekMetrics(data: MarketingRecord[] | AggregatedState): 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Planning Engine (fully data-driven from observed history)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+export interface ChannelCapMetrics {
+  channel: string;
+  blendedROAS: number;
+  bucketROAS: { low: number; medium: number; high: number };
+  bucketSpend: { low: number; medium: number; high: number };
+  capSpend: number;
+  capReason: string;
+}
+
+export interface MonthPoint {
+  key: string; // YYYY-MM
+  year: number;
+  month: number; // 0..11
+}
+
+export interface MonthlyPlanCell {
+  channel: string;
+  spend: number;
+  revenue: number;
+  baseROAS: number;
+  seasonalityMultiplier: number;
+  dayOfWeekMultiplier: number;
+  capSpend: number;
+  capped: boolean;
+  inSeason: boolean;
+  reason: string;
+}
+
+export interface MonthlyPlanRow {
+  monthKey: string;
+  label: string;
+  totalSpend: number;
+  totalRevenue: number;
+  cells: Record<string, MonthlyPlanCell>;
+}
+
+export interface MonthlyPlanResult {
+  rows: MonthlyPlanRow[];
+  channelTotals: Record<string, { spend: number; revenue: number }>;
+  totalSpend: number;
+  totalRevenue: number;
+  channelShares: Record<string, number>;
+}
+
+export function buildMonthRange(
+  timelineMonths: MonthPoint[],
+  currentMonthKey: string,
+  period: '1m' | '1q' | '6m' | '1y' | 'custom',
+  customStartMonth: string,
+  customEndMonth: string,
+): MonthPoint[] {
+  if (period === 'custom') {
+    const startIdx = timelineMonths.findIndex((m) => m.key === customStartMonth);
+    const endIdx = timelineMonths.findIndex((m) => m.key === customEndMonth);
+    if (startIdx < 0 || endIdx < 0) return [];
+    return timelineMonths.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1);
+  }
+  const periodLength: Record<'1m' | '1q' | '6m' | '1y', number> = { '1m': 1, '1q': 3, '6m': 6, '1y': 12 };
+  const startIdx = Math.max(0, timelineMonths.findIndex((m) => m.key === currentMonthKey));
+  return timelineMonths.slice(startIdx, startIdx + periodLength[period]);
+}
+
+export function getChannelCapsFromData(data: MarketingRecord[] | AggregatedState): ChannelCapMetrics[] {
+  const monthly = getMonthlyAggregation(data);
+  return CHANNELS.map((channel) => {
+    const points: { spend: number; roas: number }[] = [];
+    for (const monthData of Object.values(monthly)) {
+      const c = monthData[channel];
+      if (c && c.spend > 0) points.push({ spend: c.spend, roas: c.revenue / c.spend });
+    }
+    if (points.length === 0) {
+      return {
+        channel,
+        blendedROAS: 0,
+        bucketROAS: { low: 0, medium: 0, high: 0 },
+        bucketSpend: { low: 0, medium: 0, high: 0 },
+        capSpend: Infinity,
+        capReason: `${channel}: no historical spend data, so no cap applied.`,
+      };
+    }
+    const sorted = [...points].sort((a, b) => a.spend - b.spend);
+    const n = sorted.length;
+    const lowEnd = Math.max(1, Math.floor(n / 3));
+    const midEnd = Math.max(lowEnd + 1, Math.floor((2 * n) / 3));
+    const low = sorted.slice(0, lowEnd);
+    const medium = sorted.slice(lowEnd, midEnd);
+    const high = sorted.slice(midEnd);
+    const avg = (arr: { spend: number; roas: number }[], key: 'spend' | 'roas') =>
+      arr.length > 0 ? arr.reduce((s, v) => s + v[key], 0) / arr.length : 0;
+    const blendedROAS = avg(sorted, 'roas');
+    const bucketROAS = { low: avg(low, 'roas'), medium: avg(medium, 'roas'), high: avg(high, 'roas') };
+    const bucketSpend = { low: avg(low, 'spend'), medium: avg(medium, 'spend'), high: avg(high, 'spend') };
+    let capSpend = Infinity;
+    if (bucketROAS.medium > 0 && bucketROAS.medium < blendedROAS) capSpend = bucketSpend.medium;
+    else if (bucketROAS.high > 0 && bucketROAS.high < blendedROAS) capSpend = bucketSpend.high;
+    const capReason = Number.isFinite(capSpend)
+      ? `${channel}: capped at ${Math.round(capSpend)} because ROAS falls below historical blended average at higher spend buckets.`
+      : `${channel}: no observed ROAS drop below blended average across spend buckets.`;
+    return { channel, blendedROAS, bucketROAS, bucketSpend, capSpend, capReason };
+  });
+}
+
+export function getBestDaysByChannel(data: MarketingRecord[] | AggregatedState): Record<string, string[]> {
+  const dow = getDayOfWeekMetrics(data);
+  const bestDays: Record<string, string[]> = {};
+  dow.forEach((row) => {
+    const ranked = row.dowIndex
+      .map((value, idx) => ({ value, idx }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 2)
+      .map((d) => DOW_SHORT[d.idx]);
+    bestDays[row.channel] = ranked;
+  });
+  return bestDays;
+}
+
+function getMonthDayDistribution(year: number, month: number): number[] {
+  const counts = Array(7).fill(0);
+  const d = new Date(year, month, 1);
+  while (d.getMonth() === month) {
+    counts[d.getDay()] += 1;
+    d.setDate(d.getDate() + 1);
+  }
+  const total = counts.reduce((s, c) => s + c, 0) || 1;
+  return counts.map((c) => c / total);
+}
+
+function applyCapsAndRedistribute(
+  rawSpend: Record<string, number>,
+  capsByChannel: Record<string, number>,
+): Record<string, number> {
+  const spend = { ...rawSpend };
+  for (let iter = 0; iter < CHANNELS.length + 2; iter++) {
+    let excess = 0;
+    const uncapped: string[] = [];
+    CHANNELS.forEach((ch) => {
+      const cap = capsByChannel[ch];
+      if (Number.isFinite(cap) && spend[ch] > cap) {
+        excess += spend[ch] - cap;
+        spend[ch] = cap;
+      } else {
+        uncapped.push(ch);
+      }
+    });
+    if (excess <= 1 || uncapped.length === 0) break;
+    const uncappedTotal = uncapped.reduce((s, ch) => s + Math.max(0, spend[ch]), 0);
+    if (uncappedTotal <= 0) {
+      const equalAdd = excess / uncapped.length;
+      uncapped.forEach((ch) => { spend[ch] += equalAdd; });
+      break;
+    }
+    uncapped.forEach((ch) => {
+      spend[ch] += excess * ((spend[ch] || 0) / uncappedTotal);
+    });
+  }
+  return spend;
+}
+
+export function buildMonthlyPlanFromData(params: {
+  data: MarketingRecord[] | AggregatedState;
+  selectedMonths: MonthPoint[];
+  monthlyBudget: number;
+  modeMultiplier: number;
+  allocationShares?: Record<string, number>;
+}): MonthlyPlanResult {
+  const { data, selectedMonths, monthlyBudget, modeMultiplier, allocationShares } = params;
+  const summaries = getChannelSummaries(data);
+  const seasonality = getSeasonalityMetrics(data);
+  const dow = getDayOfWeekMetrics(data);
+  const caps = getChannelCapsFromData(data);
+
+  const baseROAS: Record<string, number> = {};
+  CHANNELS.forEach((ch) => {
+    baseROAS[ch] = summaries.find((s) => s.channel === ch)?.roas || 0;
+  });
+  const roasDenom = CHANNELS.reduce((s, ch) => s + Math.max(0.0001, baseROAS[ch]), 0) || 1;
+
+  const seasonalityMap: Record<string, number[]> = {};
+  seasonality.forEach((s) => { seasonalityMap[s.channel] = s.monthlyIndex; });
+
+  const dowMap: Record<string, number[]> = {};
+  dow.forEach((d) => { dowMap[d.channel] = d.dowIndex; });
+
+  const capMap: Record<string, number> = {};
+  caps.forEach((c) => { capMap[c.channel] = c.capSpend; });
+
+  const channelTotals: Record<string, { spend: number; revenue: number }> = {};
+  CHANNELS.forEach((ch) => { channelTotals[ch] = { spend: 0, revenue: 0 }; });
+
+  const rows: MonthlyPlanRow[] = selectedMonths.map((monthPoint) => {
+    const monthDistribution = getMonthDayDistribution(monthPoint.year, monthPoint.month);
+    const rawSpendByChannel: Record<string, number> = {};
+    CHANNELS.forEach((ch) => {
+      const baseWeight = allocationShares ? Math.max(0, allocationShares[ch] || 0) : Math.max(0.0001, baseROAS[ch]) / roasDenom;
+      const normalizedWeight = allocationShares
+        ? baseWeight / (CHANNELS.reduce((sum, c) => sum + Math.max(0, allocationShares[c] || 0), 0) || 1)
+        : baseWeight;
+      const seasonalityMult = seasonalityMap[ch]?.[monthPoint.month] ?? 1;
+      rawSpendByChannel[ch] = monthlyBudget * normalizedWeight * seasonalityMult;
+    });
+
+    const seasonalityAdjustedTotal = CHANNELS.reduce((s, ch) => s + rawSpendByChannel[ch], 0) || 1;
+    CHANNELS.forEach((ch) => {
+      rawSpendByChannel[ch] = (rawSpendByChannel[ch] / seasonalityAdjustedTotal) * monthlyBudget;
+    });
+
+    const spendByChannel = applyCapsAndRedistribute(rawSpendByChannel, capMap);
+    const totalSpend = CHANNELS.reduce((s, ch) => s + spendByChannel[ch], 0) || 1;
+    CHANNELS.forEach((ch) => {
+      spendByChannel[ch] = (spendByChannel[ch] / totalSpend) * monthlyBudget;
+    });
+
+    const monthLabel = new Date(monthPoint.year, monthPoint.month, 1).toLocaleDateString('en-IN', {
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const cells: Record<string, MonthlyPlanCell> = {};
+    CHANNELS.forEach((ch) => {
+      const seasonalityMult = seasonalityMap[ch]?.[monthPoint.month] ?? 1;
+      const dowIndex = dowMap[ch] || Array(7).fill(1);
+      const dayOfWeekMult = monthDistribution.reduce((acc, ratio, idx) => acc + ratio * (dowIndex[idx] ?? 1), 0) || 1;
+      const spend = spendByChannel[ch];
+      const revenue = spend * baseROAS[ch] * seasonalityMult * dayOfWeekMult * modeMultiplier;
+      const cap = capMap[ch];
+      const inSeason = seasonalityMult >= 1;
+      cells[ch] = {
+        channel: ch,
+        spend,
+        revenue,
+        baseROAS: baseROAS[ch],
+        seasonalityMultiplier: seasonalityMult,
+        dayOfWeekMultiplier: dayOfWeekMult,
+        capSpend: cap,
+        capped: Number.isFinite(cap) ? spend >= (cap - 1) : false,
+        inSeason,
+        reason: `${ch} gets ${Math.round(spend)} because historical ROAS is ${baseROAS[ch].toFixed(2)}x, seasonality is ${seasonalityMult.toFixed(2)}x, and weekday pattern is ${dayOfWeekMult.toFixed(2)}x.`,
+      };
+      channelTotals[ch].spend += spend;
+      channelTotals[ch].revenue += revenue;
+    });
+
+    const rowTotalRevenue = CHANNELS.reduce((sum, ch) => sum + cells[ch].revenue, 0);
+    return {
+      monthKey: monthPoint.key,
+      label: monthLabel,
+      totalSpend: monthlyBudget,
+      totalRevenue: rowTotalRevenue,
+      cells,
+    };
+  });
+
+  const totalSpend = rows.reduce((s, r) => s + r.totalSpend, 0);
+  const totalRevenue = rows.reduce((s, r) => s + r.totalRevenue, 0);
+  const channelShares: Record<string, number> = {};
+  CHANNELS.forEach((ch) => {
+    channelShares[ch] = totalSpend > 0 ? channelTotals[ch].spend / totalSpend : 0;
+  });
+
+  return { rows, channelTotals, totalSpend, totalRevenue, channelShares };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AI Insight Generation
 // ─────────────────────────────────────────────────────────────────────────────
 

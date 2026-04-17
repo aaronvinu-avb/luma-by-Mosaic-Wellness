@@ -5,16 +5,15 @@ import { ChannelName } from '@/components/ChannelName';
 import {
   getChannelSummaries,
   getChannelSaturationModels,
-  getOptimalAllocationNonLinear,
   getSeasonalityMetrics,
   getDayOfWeekMetrics,
   generateChannelInsights,
-  getMarginalROASCurve,
-  projectRevenue,
-  computeScenarios,
   getTimeFrameMonths,
+  buildMonthRange,
+  buildMonthlyPlanFromData,
+  getChannelCapsFromData,
+  getBestDaysByChannel,
 } from '@/lib/calculations';
-import { DeferredRender } from '@/components/DeferredRender';
 import {
   Sliders,
   Lightbulb,
@@ -68,9 +67,6 @@ const tooltipStyle = {
 
 export default function MixOptimizer() {
   const { data, aggregate, globalAggregate, isLoading } = useMarketingData({ includeGlobalAggregate: true });
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth();
   const timelineStartYear = 2023;
   const timelineEndYear = 2027;
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -83,17 +79,18 @@ export default function MixOptimizer() {
       }),
     [timelineStartYear, timelineEndYear]
   );
-  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+  const defaultStartKey = '2026-01';
+  const defaultEndKey = '2026-12';
   const [budget, setBudget] = useState(5000000);
   const [hasSetInitialBudget, setHasSetInitialBudget] = useState(false);
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [paused, setPaused] = useState<Set<string>>(new Set());
   const [selectedChannel, setSelectedChannel] = useState<string>(CHANNELS[0]);
   const [activeTab, setActiveTab] = useState<'optimizer' | 'insights' | 'curves'>('optimizer');
-  const [planningPeriod, setPlanningPeriod] = useState<PlanningPeriod>('1m');
+  const [planningPeriod, setPlanningPeriod] = useState<PlanningPeriod>('1y');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('target');
-  const [customStartMonth, setCustomStartMonth] = useState(currentMonthKey);
-  const [customEndMonth, setCustomEndMonth] = useState(currentMonthKey);
+  const [customStartMonth, setCustomStartMonth] = useState(defaultStartKey);
+  const [customEndMonth, setCustomEndMonth] = useState(defaultEndKey);
   const safeBudget = Number.isFinite(budget) ? Math.max(0, budget) : 0;
 
   // ── Data derivations ──────────────────────────────────────────────────────
@@ -153,42 +150,21 @@ export default function MixOptimizer() {
   }, [summaries, summaryByChannel]);
 
   const selectedRange = useMemo(() => {
-    const startIdx = timelineMonths.findIndex((m) => m.key === currentMonthKey);
-    if (planningPeriod === 'custom') {
-      const customStartIdx = timelineMonths.findIndex((m) => m.key === customStartMonth);
-      const customEndIdx = timelineMonths.findIndex((m) => m.key === customEndMonth);
-      if (customStartIdx < 0 || customEndIdx < 0) return [];
-      const minIdx = Math.min(customStartIdx, customEndIdx);
-      const maxIdx = Math.max(customStartIdx, customEndIdx);
-      return timelineMonths.slice(minIdx, maxIdx + 1);
-    }
-    const lengthByPeriod: Record<Exclude<PlanningPeriod, 'custom'>, number> = {
-      '1m': 1,
-      '1q': 3,
-      '6m': 6,
-      '1y': 12,
-    };
-    const periodLength = lengthByPeriod[planningPeriod];
-    if (startIdx < 0) return timelineMonths.slice(0, periodLength);
-    return timelineMonths.slice(startIdx, startIdx + periodLength);
-  }, [currentMonthKey, customEndMonth, customStartMonth, planningPeriod, timelineMonths]);
+    return buildMonthRange(timelineMonths, defaultStartKey, planningPeriod, customStartMonth, customEndMonth);
+  }, [customEndMonth, customStartMonth, defaultStartKey, planningPeriod, timelineMonths]);
 
   const durationMonthCount = selectedRange.length || 1;
   const totalPlannedBudget = safeBudget * durationMonthCount;
-
-  const getMonthMultiplierFor = useCallback((channel: string, monthIndex: number) => {
-    const sea = seasonalityByChannel[channel];
-    return sea?.monthlyIndex?.[monthIndex] ?? 1.0;
-  }, [seasonalityByChannel]);
-
-  const averageMonthMultipliers = useMemo(() => {
-    const mults: Record<string, number> = {};
-    for (const ch of CHANNELS) {
-      const total = selectedRange.reduce((sum, monthPoint) => sum + getMonthMultiplierFor(ch, monthPoint.month), 0);
-      mults[ch] = durationMonthCount > 0 ? total / durationMonthCount : 1.0;
-    }
-    return mults;
-  }, [durationMonthCount, getMonthMultiplierFor, selectedRange]);
+  const modeMultiplier = planningMode === 'conservative' ? 0.8 : planningMode === 'aggressive' ? 1.2 : 1.0;
+  const channelCaps = useMemo(() => getChannelCapsFromData(globalAggregate || data || []), [globalAggregate, data]);
+  const channelCapByName = useMemo(() => {
+    const map: Record<string, (typeof channelCaps)[number] | undefined> = {};
+    channelCaps.forEach((entry) => {
+      map[entry.channel] = entry;
+    });
+    return map;
+  }, [channelCaps]);
+  const bestDaysByChannel = useMemo(() => getBestDaysByChannel(globalAggregate || data || []), [globalAggregate, data]);
 
   // Initial equal split
   const alloc = useMemo(() => {
@@ -214,100 +190,45 @@ export default function MixOptimizer() {
     return eff;
   }, [alloc, paused, activeChannels]);
 
-  // Base optimal fractions via non-linear model (Context-Aware)
-  const baseOptimalFractions = useMemo(() =>
-    models.length > 0 ? getOptimalAllocationNonLinear(models, safeBudget, paused, averageMonthMultipliers) : {},
-  [models, safeBudget, paused, averageMonthMultipliers]);
+  const recommendedPlan = useMemo(() => buildMonthlyPlanFromData({
+    data: globalAggregate || data || [],
+    selectedMonths: selectedRange,
+    monthlyBudget: safeBudget,
+    modeMultiplier,
+  }), [globalAggregate, data, selectedRange, safeBudget, modeMultiplier]);
 
-  // Planning mode tunes concentration while preserving model output.
-  const optimalFractions = useMemo(() => {
-    if (planningMode === 'aggressive') {
-      const powered: Record<string, number> = {};
-      CHANNELS.forEach((ch) => {
-        const base = baseOptimalFractions[ch] || 0;
-        powered[ch] = Math.pow(base, 1.15);
+  const optimalFractions = useMemo(() => ({ ...recommendedPlan.channelShares }), [recommendedPlan.channelShares]);
+
+  const projectedPlan = useMemo(() => buildMonthlyPlanFromData({
+    data: globalAggregate || data || [],
+    selectedMonths: selectedRange,
+    monthlyBudget: safeBudget,
+    modeMultiplier,
+    allocationShares: effectiveAlloc,
+  }), [globalAggregate, data, selectedRange, safeBudget, modeMultiplier, effectiveAlloc]);
+
+  const scenarioResults = useMemo(() => {
+    return BUDGET_SCENARIOS.map((scenario) => {
+      const monthlyScenarioBudget = scenario.value;
+      const plan = buildMonthlyPlanFromData({
+        data: globalAggregate || data || [],
+        selectedMonths: selectedRange,
+        monthlyBudget: monthlyScenarioBudget,
+        modeMultiplier,
       });
-      const total = CHANNELS.reduce((sum, ch) => sum + (powered[ch] || 0), 0);
-      if (total > 0) {
-        CHANNELS.forEach((ch) => {
-          powered[ch] = (powered[ch] || 0) / total;
-        });
-        return powered;
-      }
-    }
-
-    const blendWeight = planningMode === 'conservative' ? 0.55 : 0.25;
-    const blended: Record<string, number> = {};
-    CHANNELS.forEach((ch) => {
-      const currentShare = effectiveAlloc[ch] || 0;
-      const optimalShare = baseOptimalFractions[ch] || 0;
-      blended[ch] = blendWeight * currentShare + (1 - blendWeight) * optimalShare;
+      return {
+        budget: monthlyScenarioBudget * durationMonthCount,
+        revenue: plan.totalRevenue,
+        roas: plan.totalSpend > 0 ? plan.totalRevenue / plan.totalSpend : 0,
+        fractions: plan.channelShares,
+      };
     });
-    const total = CHANNELS.reduce((sum, ch) => sum + (blended[ch] || 0), 0);
-    if (total > 0) {
-      CHANNELS.forEach((ch) => {
-        blended[ch] = (blended[ch] || 0) / total;
-      });
-      return blended;
-    }
-    return baseOptimalFractions;
-  }, [baseOptimalFractions, effectiveAlloc, planningMode]);
+  }, [globalAggregate, data, selectedRange, modeMultiplier, durationMonthCount]);
 
-  const planningFractions = useMemo(() => {
-    const optimalWeight = planningMode === 'conservative' ? 0.25 : planningMode === 'target' ? 0.55 : 0.8;
-    const next: Record<string, number> = {};
-    CHANNELS.forEach((ch) => {
-      next[ch] = (1 - optimalWeight) * (effectiveAlloc[ch] || 0) + optimalWeight * (optimalFractions[ch] || 0);
-    });
-    const total = CHANNELS.reduce((sum, ch) => sum + (next[ch] || 0), 0);
-    if (total > 0) {
-      CHANNELS.forEach((ch) => {
-        next[ch] = (next[ch] || 0) / total;
-      });
-    }
-    return next;
-  }, [effectiveAlloc, optimalFractions, planningMode]);
-
-  // Pre-computed scenario projections (Context-Aware)
-  const scenarioResults = useMemo(() =>
-    models.length > 0
-      ? computeScenarios(
-          models,
-          BUDGET_SCENARIOS.map((s) => s.value * durationMonthCount),
-          paused,
-          averageMonthMultipliers
-        )
-      : BUDGET_SCENARIOS.map(s => ({ budget: s.value, revenue: 0, roas: 0, fractions: {} })),
-  [models, paused, averageMonthMultipliers, durationMonthCount]);
-
-  // ── Projections using log model (Context-Aware) ───────────────────────────
-  const projectedRevenue = useMemo(() => {
-    if (models.length === 0) return 0;
-    return selectedRange.reduce((periodTotal, monthPoint) => {
-      const monthRevenue = CHANNELS.reduce((sum, ch) => {
-        const model = modelByChannel[ch];
-        if (!model) return sum;
-        const mult = getMonthMultiplierFor(ch, monthPoint.month);
-        return sum + projectRevenue(model, (planningFractions[ch] || 0) * safeBudget, mult);
-      }, 0);
-      return periodTotal + monthRevenue;
-    }, 0);
-  }, [getMonthMultiplierFor, modelByChannel, models.length, planningFractions, safeBudget, selectedRange]);
+  const projectedRevenue = projectedPlan.totalRevenue;
 
   const projectedROAS = totalPlannedBudget > 0 ? projectedRevenue / totalPlannedBudget : 0;
-
-  const optimalRevenue = useMemo(() => {
-    if (models.length === 0) return 0;
-    return selectedRange.reduce((periodTotal, monthPoint) => {
-      const monthRevenue = CHANNELS.reduce((sum, ch) => {
-        const model = modelByChannel[ch];
-        if (!model) return sum;
-        const mult = getMonthMultiplierFor(ch, monthPoint.month);
-        return sum + projectRevenue(model, (optimalFractions[ch] || 0) * safeBudget, mult);
-      }, 0);
-      return periodTotal + monthRevenue;
-    }, 0);
-  }, [getMonthMultiplierFor, modelByChannel, models.length, optimalFractions, safeBudget, selectedRange]);
+  const optimalRevenue = recommendedPlan.totalRevenue;
 
   const revenueGap = Math.max(0, optimalRevenue - projectedRevenue);
   const durationLabel = useMemo(() => {
@@ -325,6 +246,53 @@ export default function MixOptimizer() {
     return 'Period Budget';
   }, [planningPeriod]);
   const totalPct = useMemo(() => CHANNELS.reduce((s, ch) => s + (alloc[ch] || 0), 0), [alloc]);
+  const showWorkRows = useMemo(() => {
+    return CHANNELS.map((ch) => {
+      const avgSeasonality =
+        selectedRange.length > 0
+          ? selectedRange.reduce((sum, point) => sum + (seasonalityByChannel[ch]?.monthlyIndex?.[point.month] ?? 1), 0) / selectedRange.length
+          : 1;
+      const avgDowMultiplier =
+        selectedRange.length > 0
+          ? selectedRange.reduce((sum, point) => {
+              const monthDays = new Date(point.year, point.month + 1, 0).getDate();
+              const dowWeights = Array.from({ length: 7 }, (_, dayIdx) => {
+                let count = 0;
+                for (let d = 1; d <= monthDays; d++) {
+                  const dt = new Date(point.year, point.month, d);
+                  if (dt.getDay() === dayIdx) count += 1;
+                }
+                return count / monthDays;
+              });
+              const dowIndex = dowMetrics.find((d) => d.channel === ch)?.dowIndex || Array(7).fill(1);
+              return sum + dowWeights.reduce((acc, w, idx) => acc + w * (dowIndex[idx] || 1), 0);
+            }, 0) / selectedRange.length
+          : 1;
+      const channelSpend = recommendedPlan.channelTotals[ch]?.spend || 0;
+      const channelRevenue = recommendedPlan.channelTotals[ch]?.revenue || 0;
+      const monthlySpend = durationMonthCount > 0 ? channelSpend / durationMonthCount : 0;
+      const monthlyRevenue = durationMonthCount > 0 ? channelRevenue / durationMonthCount : 0;
+      return {
+        channel: ch,
+        baseROAS: summaryByChannel[ch]?.roas || 0,
+        seasonality: avgSeasonality,
+        dow: avgDowMultiplier,
+        cap: channelCapByName[ch]?.capSpend ?? Infinity,
+        monthlySpend,
+        monthlyRevenue,
+        reason:
+          recommendedPlan.rows[0]?.cells[ch]?.reason ||
+          `${ch} allocation follows observed historical ROAS and month/day multipliers.`,
+      };
+    });
+  }, [selectedRange, seasonalityByChannel, dowMetrics, recommendedPlan.channelTotals, recommendedPlan.rows, durationMonthCount, summaryByChannel, channelCapByName]);
+  const channelAvgMonthlySpend = useMemo(() => {
+    const avg: Record<string, number> = {};
+    CHANNELS.forEach((ch) => {
+      avg[ch] = durationMonthCount > 0 ? (recommendedPlan.channelTotals[ch]?.spend || 0) / durationMonthCount : 0;
+    });
+    return avg;
+  }, [recommendedPlan.channelTotals, durationMonthCount]);
 
   // ── Insight generation ────────────────────────────────────────────────────
   const insights = useMemo(() =>
@@ -335,22 +303,25 @@ export default function MixOptimizer() {
 
   // ── Marginal ROAS curve for selected channel ──────────────────────────────
   const marginalCurveData = useMemo(() => {
-    const model = modelByChannel[selectedChannel];
-    if (!model) return [];
-    const currentSpend = (effectiveAlloc[selectedChannel] || 0) * safeBudget;
-    return getMarginalROASCurve(model, Math.max(currentSpend * 2, 3000000), 40);
-  }, [selectedChannel, effectiveAlloc, safeBudget, modelByChannel]);
+    const cap = channelCapByName[selectedChannel];
+    if (!cap) return [];
+    return [
+      { spend: cap.bucketSpend.low, roas: cap.bucketROAS.low, bucket: 'Low Spend' },
+      { spend: cap.bucketSpend.medium, roas: cap.bucketROAS.medium, bucket: 'Mid Spend' },
+      { spend: cap.bucketSpend.high, roas: cap.bucketROAS.high, bucket: 'High Spend' },
+    ].filter((p) => p.spend > 0 && p.roas > 0);
+  }, [selectedChannel, channelCapByName]);
 
-  const currentChannelSpend = (effectiveAlloc[selectedChannel] || 0) * safeBudget;
+  const currentChannelSpend = (projectedPlan.channelTotals[selectedChannel]?.spend || 0) / durationMonthCount;
 
   // ── Comparison bar chart data ─────────────────────────────────────────────
   const comparisonData = useMemo(() =>
     CHANNELS.map(ch => ({
       channel: ch.replace(' ', '\n'),
-      current: parseFloat(((effectiveAlloc[ch] || 0) * 100).toFixed(1)),
+      current: parseFloat((((projectedPlan.channelShares[ch] || 0) * 100)).toFixed(1)),
       optimal: parseFloat(((optimalFractions[ch] || 0) * 100).toFixed(1)),
     })),
-  [effectiveAlloc, optimalFractions]);
+  [projectedPlan.channelShares, optimalFractions]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleSlider = useCallback((ch: string, val: number[]) => {
@@ -395,29 +366,16 @@ export default function MixOptimizer() {
         </div>
         <button 
           onClick={() => exportToCSV(CHANNELS.map(ch => {
-            const model = modelByChannel[ch];
-            const currentAllocation = effectiveAlloc[ch] || 0;
+            const currentAllocation = projectedPlan.channelShares[ch] || 0;
             const optimalAllocation = optimalFractions[ch] || 0;
-            const currentRevenue = model
-              ? selectedRange.reduce(
-                  (sum, monthPoint) =>
-                    sum + projectRevenue(model, currentAllocation * safeBudget, getMonthMultiplierFor(ch, monthPoint.month)),
-                  0
-                )
-              : 0;
-            const optimalRevenue = model
-              ? selectedRange.reduce(
-                  (sum, monthPoint) =>
-                    sum + projectRevenue(model, optimalAllocation * safeBudget, getMonthMultiplierFor(ch, monthPoint.month)),
-                  0
-                )
-              : 0;
+            const currentRevenue = projectedPlan.channelTotals[ch]?.revenue || 0;
+            const optimalRevenue = recommendedPlan.channelTotals[ch]?.revenue || 0;
             return {
             Channel: ch,
             'Current Allocation (%)': (currentAllocation * 100).toFixed(1),
             'AI Optimal Allocation (%)': (optimalAllocation * 100).toFixed(1),
-            'Current Spend': (currentAllocation * totalPlannedBudget).toFixed(0),
-            'Optimal Spend': (optimalAllocation * totalPlannedBudget).toFixed(0),
+            'Current Spend': ((projectedPlan.channelTotals[ch]?.spend || 0)).toFixed(0),
+            'Optimal Spend': ((recommendedPlan.channelTotals[ch]?.spend || 0)).toFixed(0),
             'Current Revenue': currentRevenue.toFixed(0),
             'Optimal Revenue': optimalRevenue.toFixed(0)
             };
@@ -510,9 +468,9 @@ export default function MixOptimizer() {
             </p>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {[
-                { value: 'conservative', label: 'Conservative' },
-                { value: 'target', label: 'Target' },
-                { value: 'aggressive', label: 'Aggressive' },
+                { value: 'conservative', label: 'Conservative (0.8x)' },
+                { value: 'target', label: 'Target (1.0x)' },
+                { value: 'aggressive', label: 'Aggressive (1.2x)' },
               ].map((mode) => (
                 <button
                   key={mode.value}
@@ -539,8 +497,100 @@ export default function MixOptimizer() {
 
         <div style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-root)' }}>
           <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)' }}>
-            {`${selectedRange.length} month${selectedRange.length === 1 ? '' : 's'} at ${formatINRCompact(safeBudget)}/month = ${formatINRCompact(totalPlannedBudget)} total budget`}
+            {`${selectedRange.length} month${selectedRange.length === 1 ? '' : 's'} at ${formatINRCompact(safeBudget)} = ${formatINRCompact(totalPlannedBudget)} total budget`}
           </p>
+        </div>
+      </div>
+
+      {/* Month-by-month allocation plan */}
+      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px 10px' }}>
+          <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Month-by-Month Allocation Plan
+          </h2>
+          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            Data-driven monthly recommendations by channel. Green = above channel average, red = below.
+          </p>
+        </div>
+        <div style={{ overflowX: 'auto', borderTop: '1px solid var(--border-subtle)' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1400 }}>
+            <thead>
+              <tr style={{ backgroundColor: 'var(--bg-card)' }}>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Month</th>
+                {CHANNELS.map((ch) => (
+                  <th key={ch} style={{ padding: '10px 10px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                    {ch}
+                  </th>
+                ))}
+                <th style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Month Total</th>
+                <th style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Expected Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recommendedPlan.rows.map((row) => (
+                <tr key={row.monthKey} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  <td style={{ padding: '10px 12px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{row.label}</td>
+                  {CHANNELS.map((ch) => {
+                    const cell = row.cells[ch];
+                    const avgSpend = channelAvgMonthlySpend[ch] || 0;
+                    const delta = avgSpend > 0 ? (cell.spend - avgSpend) / avgSpend : 0;
+                    const bg = delta > 0.06 ? 'rgba(52,211,153,0.10)' : delta < -0.06 ? 'rgba(248,113,113,0.10)' : 'transparent';
+                    const color = delta > 0.06 ? '#34D399' : delta < -0.06 ? '#F87171' : 'var(--text-secondary)';
+                    return (
+                      <td key={`${row.monthKey}-${ch}`} style={{ padding: '10px 10px', textAlign: 'right', fontFamily: 'Plus Jakarta Sans', fontSize: 11, backgroundColor: bg }}>
+                        <div style={{ color }}>{formatINRCompact(cell.spend)}</div>
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{cell.inSeason ? 'in-season' : 'off-season'}</div>
+                      </td>
+                    );
+                  })}
+                  <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {formatINRCompact(row.totalSpend)}
+                  </td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: '#34D399' }}>
+                    {formatINRCompact(row.totalRevenue)}
+                  </td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: '1px solid var(--border-strong)', backgroundColor: 'var(--bg-root)' }}>
+                <td style={{ padding: '11px 12px', fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase' }}>Channel totals</td>
+                {CHANNELS.map((ch) => (
+                  <td key={`total-${ch}`} style={{ padding: '11px 10px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {formatINRCompact(recommendedPlan.channelTotals[ch]?.spend || 0)}
+                  </td>
+                ))}
+                <td style={{ padding: '11px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>
+                  {formatINRCompact(recommendedPlan.totalSpend)}
+                </td>
+                <td style={{ padding: '11px 12px', textAlign: 'right', fontFamily: 'Outfit', fontSize: 12, fontWeight: 800, color: '#34D399' }}>
+                  {formatINRCompact(recommendedPlan.totalRevenue)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Show your work */}
+      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 14, padding: '14px 16px' }}>
+        <h3 style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+          Allocation Inputs by Channel (Show Your Work)
+        </h3>
+        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+          {showWorkRows.map((row) => (
+            <div key={row.channel} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', backgroundColor: 'var(--bg-root)' }}>
+              <p style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{row.channel}</p>
+              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                Hist ROAS: {row.baseROAS.toFixed(2)}x | Seasonality: {row.seasonality.toFixed(2)}x | Day-of-week: {row.dow.toFixed(2)}x
+              </p>
+              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                Cap: {Number.isFinite(row.cap) ? formatINRCompact(row.cap) : 'No cap from observed buckets'} | Best Days: {(bestDaysByChannel[row.channel] || []).join(', ')}
+              </p>
+              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>
+                Rec Spend: {formatINRCompact(row.monthlySpend)}/month | Exp Rev: {formatINRCompact(row.monthlyRevenue)}/month
+              </p>
+              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-secondary)', marginTop: 4 }}>{row.reason}</p>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -602,13 +652,7 @@ export default function MixOptimizer() {
                 const pct = Math.round((alloc[ch] || 0) * 100);
                 const monthlyAmt = (effectiveAlloc[ch] || 0) * safeBudget;
                 const periodAmt = monthlyAmt * durationMonthCount;
-                const model = modelByChannel[ch];
-                const projRev = model
-                  ? selectedRange.reduce(
-                      (sum, monthPoint) => sum + projectRevenue(model, monthlyAmt, getMonthMultiplierFor(ch, monthPoint.month)),
-                      0
-                    )
-                  : periodAmt * (roasMap[ch] || 0);
+                const projRev = projectedPlan.channelTotals[ch]?.revenue || 0;
                 const optPct = Math.round((optimalFractions[ch] || 0) * 100);
                 const isPaused = paused.has(ch);
                 const color = CHANNEL_COLORS[ci];
@@ -634,7 +678,9 @@ export default function MixOptimizer() {
                     <Slider value={[pct]} min={0} max={60} step={1} onValueChange={v => handleSlider(ch, v)} disabled={isPaused} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
                       <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>{formatINRCompact(periodAmt)} spend</span>
-                      <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: color }}>→ {formatINRCompact(projRev)} rev</span>
+                      <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: color }}>
+                        → {formatINRCompact(projRev)} rev ({periodAmt > 0 ? (projRev / periodAmt).toFixed(2) : '0.00'}x)
+                      </span>
                     </div>
                   </div>
                 );
@@ -804,7 +850,7 @@ export default function MixOptimizer() {
             <p style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>Select Channel</p>
             {CHANNELS.map((ch, ci) => {
               const isActive = selectedChannel === ch;
-              const model = modelByChannel[ch];
+              const cap = channelCapByName[ch];
               const color = CHANNEL_COLORS[ci];
               return (
                 <button
@@ -814,9 +860,9 @@ export default function MixOptimizer() {
                 >
                   <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
                   <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', flex: 1 }}>{ch}</span>
-                  {model && (
+                  {cap && (
                     <span style={{ fontFamily: 'Outfit', fontSize: 10, color: color, fontWeight: 600 }}>
-                      α={model.alpha.toFixed(0)}
+                      cap {Number.isFinite(cap.capSpend) ? formatINRCompact(cap.capSpend) : '—'}
                     </span>
                   )}
                 </button>
@@ -827,7 +873,7 @@ export default function MixOptimizer() {
           {/* Curve chart */}
           <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: 24 }}>
             {(() => {
-              const model = modelByChannel[selectedChannel];
+              const cap = channelCapByName[selectedChannel];
               const color = CHANNEL_COLORS[CHANNELS.indexOf(selectedChannel)];
               const summary = summaryByChannel[selectedChannel];
               return (
@@ -836,15 +882,15 @@ export default function MixOptimizer() {
                     <div>
                       <h2 style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{selectedChannel} — Diminishing Returns</h2>
                       <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                        Marginal ROAS curve: at what spend level does each additional ₹ stop being worth it?
+                        Observed low/medium/high spend buckets from historical data and where ROAS drops.
                       </p>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       {[
                         { label: 'Historical ROAS', value: summary ? `${summary.roas.toFixed(2)}x` : '—' },
-                        { label: 'Saturation Point', value: model ? formatINRCompact(model.saturationPoint) : '—' },
+                        { label: 'Diminishing Cap', value: cap && Number.isFinite(cap.capSpend) ? formatINRCompact(cap.capSpend) : 'No cap' },
                         { label: 'Current Spend', value: formatINRCompact(currentChannelSpend) },
-                        { label: 'Marg. ROAS Now', value: model ? `${(model.alpha / (currentChannelSpend + 1)).toFixed(2)}x` : '—' },
+                        { label: 'High-Bucket ROAS', value: cap ? `${cap.bucketROAS.high.toFixed(2)}x` : '—' },
                       ].map(kpi => (
                         <div key={kpi.label} style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '8px 12px', border: '1px solid var(--border-strong)' }}>
                           <p style={{ fontFamily: 'Outfit', fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{kpi.label}</p>
@@ -870,20 +916,19 @@ export default function MixOptimizer() {
                         label={{ value: 'ROAS', angle: -90, position: 'insideLeft', style: { fill: 'var(--text-muted)', fontSize: 11 } }}
                       />
                       <Tooltip {...tooltipStyle} formatter={(v: number, name: string) => [`${v.toFixed(2)}x`, name]} labelFormatter={v => `Spend: ${formatINRCompact(Number(v))}`} />
-                      <ReferenceLine y={1} stroke="#F87171" strokeDasharray="4 4" label={{ value: 'Breakeven ROAS = 1x', position: 'insideRight', style: { fill: '#F87171', fontSize: 10 } }} />
+                      <ReferenceLine y={cap?.blendedROAS || 0} stroke="#F87171" strokeDasharray="4 4" label={{ value: 'Blended Avg ROAS', position: 'insideRight', style: { fill: '#F87171', fontSize: 10 } }} />
                       <ReferenceLine x={currentChannelSpend} stroke="#FBBF24" strokeDasharray="4 4" label={{ value: 'Current', position: 'top', style: { fill: '#FBBF24', fontSize: 10 } }} />
                       <Legend wrapperStyle={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)' }} />
-                      <Line type="monotone" dataKey="marginalROAS" stroke={color} strokeWidth={2.5} dot={false} name="Marginal ROAS" />
-                      <Line type="monotone" dataKey="avgROAS" stroke={`${color}60`} strokeWidth={1.5} dot={false} name="Average ROAS" strokeDasharray="5 3" />
+                      <Line type="monotone" dataKey="roas" stroke={color} strokeWidth={2.5} dot={{ r: 4 }} name="Observed ROAS" />
                     </LineChart>
                   </ResponsiveContainer>
 
                   <div style={{ marginTop: 16, padding: '12px 16px', backgroundColor: 'var(--bg-root)', borderRadius: 10, border: '1px solid var(--border-strong)' }}>
                     <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
                       <strong style={{ color: 'var(--text-primary)' }}>Reading this chart: </strong>
-                      The <span style={{ color }}>Marginal ROAS</span> line shows how much revenue each additional ₹1 of spend generates at that level.
-                      When it crosses the <span style={{ color: '#F87171' }}>breakeven line (1x)</span>, you're spending more than you earn on the margin.
-                      The <span style={{ color: '#FBBF24' }}>yellow marker</span> shows your current spend allocation.
+                      The points show observed ROAS at low, medium, and high historical spend levels for this channel.
+                      The red dashed line is blended average ROAS; when higher-spend buckets drop below it, the channel is capped.
+                      The yellow marker shows your current monthly spend for this channel.
                     </p>
                   </div>
                 </>
