@@ -99,31 +99,45 @@ export function useMarketingData() {
     retry: false,
   });
 
-  const { dateFilter } = useAppContext();
 
-  const aggregate = useMemo(() => {
-    if (!query.data) return undefined;
-    return getAggregatedState(query.data);
-  }, [query.data]);
+  const { dateFilter } = useAppContext();
 
   const filteredData = useMemo(() => {
     if (!query.data) return undefined;
     if (dateFilter === 'all') return query.data;
 
+    const nowTime = new Date('2025-12-31').getTime();
     return query.data.filter(r => {
       if (dateFilter === '2023') return r.date.startsWith('2023');
       if (dateFilter === '2024') return r.date.startsWith('2024');
       if (dateFilter === '2025') return r.date.startsWith('2025');
-      
-      const rDate = new Date(r.date);
-      const now = new Date('2025-12-31'); // Anchor to dataset end
-      const diffDays = (now.getTime() - rDate.getTime()) / (1000 * 3600 * 24);
-      
+
+      const rTime = new Date(r.date).getTime();
+      const diffDays = (nowTime - rTime) / (1000 * 3600 * 24);
+
       if (dateFilter === 'last30') return diffDays <= 30;
       if (dateFilter === 'last90') return diffDays <= 90;
       return true;
     });
   }, [query.data, dateFilter]);
 
-  return { ...query, data: filteredData, aggregate, dataSource: query.data ? _dataSource : 'loading' };
+  // globalAggregate is derived from the full unfiltered history (for training/YoY)
+  const globalAggregate = useMemo(() => {
+    if (!query.data) return undefined;
+    return getAggregatedState(query.data);
+  }, [query.data]);
+
+  // aggregate is always derived from the same data the pages see (for UI display)
+  const aggregate = useMemo(() => {
+    if (!filteredData) return undefined;
+    return getAggregatedState(filteredData);
+  }, [filteredData]);
+
+  return {
+    ...query,
+    data: filteredData,
+    aggregate,
+    globalAggregate,
+    dataSource: query.data ? _dataSource : 'loading'
+  };
 }

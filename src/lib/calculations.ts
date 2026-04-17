@@ -20,6 +20,9 @@ export interface ChannelSummary {
 export interface AggregatedState {
   summaries: ChannelSummary[];
   monthlyMap: Record<string, Record<string, { spend: number; revenue: number; impressions: number; clicks: number; conversions: number; newCustomers: number }>>;
+  weeklyMap: Record<string, Record<string, { spend: number; revenue: number }>>; // WeekKey -> Channel -> Metrics
+  yearlyRevenueMap: Record<string, number>; // YearKey -> Total Revenue
+  dailySeries: Record<string, { date: string; roas: number }[]>; // Channel -> Last N days
   dowMap: Record<string, { spend: number; revenue: number }[]>; // Channel -> Day buckets [0..6]
   totalDays: number;
 }
@@ -33,41 +36,73 @@ export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
   
   const summariesMap = new Map<string, { spend: number; revenue: number; conversions: number; newCustomers: number }>();
   const monthlyMap: AggregatedState['monthlyMap'] = {};
+  const weeklyMap: AggregatedState['weeklyMap'] = {};
+  const yearlyRevenueMap: Record<string, number> = {};
+  const dailySeries: AggregatedState['dailySeries'] = {};
   const dowMap: AggregatedState['dowMap'] = {};
   const dateSet = new Set<string>();
 
+  const DOW_ORDER: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
   // Use string manipulation instead of new Date() for massive performance gains
   for (const r of data) {
+    if (!r.date || !r.channel) continue;
+    
     const { channel, spend, revenue, conversions, new_customers, date, day_of_week } = r;
+    const impressions = r.impressions || 0;
+    const clicks = r.clicks || 0;
     
     // 1. Channel Summary
     const ch = summariesMap.get(channel) || { spend: 0, revenue: 0, conversions: 0, newCustomers: 0 };
-    ch.spend += spend;
-    ch.revenue += revenue;
-    ch.conversions += conversions;
-    ch.newCustomers += new_customers;
+    ch.spend += spend || 0;
+    ch.revenue += revenue || 0;
+    ch.conversions += conversions || 0;
+    ch.newCustomers += new_customers || 0;
     summariesMap.set(channel, ch);
 
     // 2. Monthly Aggregation
     const month = date.slice(0, 7); // YYYY-MM
     if (!monthlyMap[month]) monthlyMap[month] = {};
-    if (!monthlyMap[month][channel]) monthlyMap[month][channel] = { spend: 0, revenue: 0, impressions: r.impressions, clicks: r.clicks, conversions: 0, newCustomers: 0 };
+    if (!monthlyMap[month][channel]) {
+      monthlyMap[month][channel] = { spend: 0, revenue: 0, impressions: 0, clicks: 0, conversions: 0, newCustomers: 0 };
+    }
     const m = monthlyMap[month][channel];
-    m.spend += spend;
-    m.revenue += revenue;
-    m.conversions += conversions;
-    m.newCustomers += new_customers;
+    m.spend += spend || 0;
+    m.revenue += revenue || 0;
+    m.impressions += impressions;
+    m.clicks += clicks;
+    m.conversions += conversions || 0;
+    m.newCustomers += new_customers || 0;
 
-    // 3. Day of Week Aggregation (using API pre-computed DOW)
+    // 3. Weekly Aggregation
+    const d = new Date(date);
+    if (isNaN(d.getTime())) continue; // Skip malformed dates
+    
+    const weekStart = new Date(d);
+    weekStart.setDate(d.getDate() - (DOW_ORDER[day_of_week] || 0));
+    const weekKey = weekStart.toISOString().split('T')[0];
+    if (!weeklyMap[weekKey]) weeklyMap[weekKey] = {};
+    if (!weeklyMap[weekKey][channel]) weeklyMap[weekKey][channel] = { spend: 0, revenue: 0 };
+    weeklyMap[weekKey][channel].spend += spend || 0;
+    weeklyMap[weekKey][channel].revenue += revenue || 0;
+
+    // 4. Day of Week Aggregation
     if (!dowMap[channel]) {
       dowMap[channel] = Array.from({ length: 7 }, () => ({ spend: 0, revenue: 0 }));
     }
-    const DOW_ORDER: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
     const dowIdx = DOW_ORDER[day_of_week] !== undefined ? DOW_ORDER[day_of_week] : 0;
-    dowMap[channel][dowIdx].spend += spend;
-    dowMap[channel][dowIdx].revenue += revenue;
+    dowMap[channel][dowIdx].spend += spend || 0;
+    dowMap[channel][dowIdx].revenue += revenue || 0;
 
-    // 4. Timeframe tracking
+    // 5. Yearly Revenue Aggregation (for YoY)
+    const year = date.slice(0, 4);
+    yearlyRevenueMap[year] = (yearlyRevenueMap[year] || 0) + (revenue || 0);
+
+    // 6. Daily Series for Sparklines
+    if (!dailySeries[channel]) dailySeries[channel] = [];
+    dailySeries[channel].push({ date, roas: (spend || 0) > 0 ? (revenue || 0) / spend : 0 });
+
+    // 7. Timeframe tracking
     dateSet.add(date);
   }
 
@@ -84,25 +119,46 @@ export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
     };
   });
 
+  // Sort daily series by date (one-time cost per aggregation)
+  for (const ch of CHANNELS) {
+    if (dailySeries[ch]) {
+      dailySeries[ch].sort((a, b) => a.date.localeCompare(b.date));
+    }
+  }
+
   const end = performance.now();
   console.log(`[Pulse] Aggregated all metrics in ${((end - start)).toFixed(2)}ms`);
 
   return {
     summaries,
     monthlyMap,
+    weeklyMap,
+    yearlyRevenueMap,
+    dailySeries,
     dowMap,
     totalDays: dateSet.size
   };
 }
 
-/** Legacy wrapper kept for minimal component refactoring */
-export function getChannelSummaries(data: MarketingRecord[]): ChannelSummary[] {
+/** State-aware channel summaries — works with both raw data and pre-aggregated state */
+export function getChannelSummaries(data: MarketingRecord[] | AggregatedState): ChannelSummary[] {
+  if ('summaries' in data) return data.summaries;
+  if (!Array.isArray(data)) return [];
   return getAggregatedState(data).summaries;
 }
 
-export function getWeeklyROAS(data: MarketingRecord[], channel: string): { week: string; roas: number }[] {
+export function getWeeklyROAS(data: MarketingRecord[] | AggregatedState, channel: string): { week: string; roas: number }[] {
+  if ('weeklyMap' in data) {
+    return Object.entries(data.weeklyMap)
+      .map(([week, channels]) => ({
+        week,
+        roas: channels[channel] && channels[channel].spend > 0 ? channels[channel].revenue / channels[channel].spend : 0
+      }))
+      .sort((a, b) => a.week.localeCompare(b.week));
+  }
+
   const weekMap = new Map<string, { spend: number; revenue: number }>();
-  for (const r of data) {
+  for (const r of data as MarketingRecord[]) {
     if (r.channel !== channel) continue;
     const d = new Date(r.date);
     const weekStart = new Date(d);
@@ -124,7 +180,7 @@ export interface FatigueAlert {
   last8Weeks: { week: string; roas: number }[];
 }
 
-export function detectFatigue(data: MarketingRecord[]): FatigueAlert[] {
+export function detectFatigue(data: MarketingRecord[] | AggregatedState): FatigueAlert[] {
   const alerts: FatigueAlert[] = [];
   for (const ch of CHANNELS) {
     const weekly = getWeeklyROAS(data, ch);
@@ -178,7 +234,7 @@ export interface SaturationModel {
   saturationPoint: number;
 }
 
-export function getChannelSaturationModels(data: MarketingRecord[]): SaturationModel[] {
+export function getChannelSaturationModels(data: MarketingRecord[] | AggregatedState): SaturationModel[] {
   const monthly = getMonthlyAggregation(data);
   // Calculate seasonality indices first so we can normalize our saturation fitting
   const seasonalityIndices = getSeasonalityMetrics(data);
@@ -354,11 +410,20 @@ export function computeScenarios(
 // Timeframe Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function getTimeFrameMonths(data: MarketingRecord[]): number {
-  if (!data || data.length === 0) return 1;
-  const dates = new Set(data.map(r => r.date));
-  // Total unique days divided by avg month length
-  return Math.max(1, dates.size / 30.41);
+export function getTimeFrameMonths(data: MarketingRecord[] | AggregatedState): number {
+  if (!data) return 1;
+  
+  // Use pre-calculated totalDays from state if available (O(1))
+  if ('totalDays' in data) {
+    return Math.max(1, data.totalDays / 30.41);
+  }
+
+  if (Array.isArray(data) && data.length > 0) {
+    const dates = new Set(data.map(r => r.date));
+    return Math.max(1, dates.size / 30.41);
+  }
+
+  return 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,14 +459,19 @@ export function getSeasonalityMetrics(data: MarketingRecord[] | AggregatedState)
     for (const [monthKey, monthData] of Object.entries(monthly)) {
       const c = monthData[channel];
       if (c) {
-        const m = parseInt(monthKey.slice(5, 7)) - 1;
-        monthBuckets[m].spend += c.spend;
-        monthBuckets[m].revenue += c.revenue;
+        const monthNum = (parseInt(monthKey.slice(5, 7)) - 1) % 12;
+        if (!isNaN(monthNum)) {
+          monthBuckets[monthNum].spend += c.spend;
+          monthBuckets[monthNum].revenue += c.revenue;
+        }
       }
     }
 
     const monthlyROAS = monthBuckets.map(b => (b.spend > 0 ? b.revenue / b.spend : 0));
-    const avgROAS = monthlyROAS.reduce((s, v) => s + v, 0) / 12 || 1;
+    const activeMonths = monthBuckets.filter(b => b.spend > 0);
+    const avgROAS = activeMonths.length > 0
+      ? activeMonths.reduce((s, v) => s + (v.spend > 0 ? v.revenue / v.spend : 0), 0) / activeMonths.length
+      : 1;
     const monthlyIndex = monthlyROAS.map(r => parseFloat((avgROAS > 0 ? r / avgROAS : 1).toFixed(3)));
 
     let peakMonth = 0, troughMonth = 0;

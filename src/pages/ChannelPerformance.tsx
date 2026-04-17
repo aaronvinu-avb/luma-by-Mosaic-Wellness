@@ -33,7 +33,7 @@ const CustomLegend = ({ payload }: any) => (
 );
 
 export default function ChannelPerformance() {
-  const { data, aggregate, isLoading } = useMarketingData();
+  const { data, aggregate, globalAggregate, isLoading } = useMarketingData();
   const [sortKey, setSortKey] = useState<SortKey>('roas');
   const [sortAsc, setSortAsc] = useState(false);
 
@@ -49,11 +49,11 @@ export default function ChannelPerformance() {
     return s;
   }, [summaries, sortKey, sortAsc]);
 
-  const models = useMemo(() => (aggregate || data) ? getChannelSaturationModels(aggregate || data!) : [], [data, aggregate]);
+  const models = useMemo(() => (globalAggregate || data) ? getChannelSaturationModels(globalAggregate || data!) : [], [data, globalAggregate]);
 
   const diminishingData = useMemo(() => {
     const multipliers = [0.5, 1, 1.5, 2, 2.5, 3];
-    const timeFrameMonths = getTimeFrameMonths(aggregate || data || []);
+    const timeFrameMonths = getTimeFrameMonths(aggregate || globalAggregate || data || []);
     return multipliers.map(mult => {
       const row: Record<string, number | string> = { multiplier: `${mult}x` };
       for (const s of summaries) {
@@ -139,7 +139,14 @@ export default function ChannelPerformance() {
                     </td>
                     <td style={{ padding: '16px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINR(Math.round(s.cpa))}</td>
                     <td style={{ padding: '16px 16px' }}>
-                      {data && <MiniSparkline data={getDailySparkline(data, s.channel)} color={CHANNEL_COLORS[CHANNELS.indexOf(s.channel)]} width={100} height={32} />}
+                      {aggregate && aggregate.dailySeries[s.channel] && (
+                        <MiniSparkline 
+                          data={aggregate.dailySeries[s.channel].slice(-7).map(d => d.roas)} 
+                          color={CHANNEL_COLORS[CHANNELS.indexOf(s.channel)]} 
+                          width={100} 
+                          height={32} 
+                        />
+                      )}
                     </td>
                   </tr>
                 );

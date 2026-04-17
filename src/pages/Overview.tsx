@@ -2,17 +2,20 @@ import { useMemo, useState } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { ChannelName } from '@/components/ChannelName';
-import { getChannelSummaries, getMonthlyAggregation, getChannelSaturationModels, getOptimalAllocationNonLinear, projectRevenue, getTimeFrameMonths } from '@/lib/calculations';
+import { getChannelSummaries, getMonthlyAggregation, getChannelSaturationModels, getOptimalAllocationNonLinear, projectRevenue, getTimeFrameMonths, getSeasonalityMetrics } from '@/lib/calculations';
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS } from '@/lib/mockData';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/exportData';
 
+import { useAppContext } from '@/contexts/AppContext';
+
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
 
 export default function Overview() {
-  const { data, aggregate, isLoading, error, refetch, dataSource } = useMarketingData();
+  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource } = useMarketingData();
+  const { dateFilter } = useAppContext();
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
 
@@ -28,38 +31,63 @@ export default function Overview() {
     return { ...s, roas: s.spend > 0 ? s.revenue / s.spend : 0 };
   }, [summaries]);
 
-  const yoyGrowth = useMemo(() => {
-    if (!data) return 0;
-    const rev2025 = data.filter(r => r.date.startsWith('2025')).reduce((s, r) => s + r.revenue, 0);
-    const rev2024 = data.filter(r => r.date.startsWith('2024')).reduce((s, r) => s + r.revenue, 0);
-    return rev2024 > 0 ? ((rev2025 - rev2024) / rev2024) * 100 : 0;
-  }, [data]);
+  const { yoyGrowth, yoyLabel } = useMemo(() => {
+    if (!globalAggregate) return { yoyGrowth: 0, yoyLabel: 'vs prior year' };
+    
+    let currentYear = '2025';
+    if (['2023', '2024', '2025'].includes(dateFilter)) {
+      currentYear = dateFilter;
+    } else {
+      const years = Object.keys(globalAggregate.yearlyRevenueMap).map(Number).filter(y => !isNaN(y));
+      if (years.length > 0) currentYear = Math.max(...years).toString();
+    }
+    
+    const priorYear = (parseInt(currentYear) - 1).toString();
+    const revCurrent = globalAggregate.yearlyRevenueMap[currentYear] || 0;
+    const revPrior = globalAggregate.yearlyRevenueMap[priorYear] || 0;
+    
+    const growth = revPrior > 0 ? ((revCurrent - revPrior) / revPrior) * 100 : 0;
+    
+    return {
+      yoyGrowth: growth,
+      yoyLabel: `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% (${currentYear} vs ${priorYear})`
+    };
+  }, [globalAggregate, dateFilter]);
 
-  const models = useMemo(() => (aggregate || data) ? getChannelSaturationModels(aggregate || data!) : [], [data, aggregate]);
+  const models = useMemo(() => (globalAggregate || aggregate || data) ? getChannelSaturationModels(globalAggregate || aggregate || data!) : [], [data, aggregate, globalAggregate]);
 
   const timeFrameMonths = useMemo(() => getTimeFrameMonths(aggregate || data || []), [data, aggregate]);
 
-  const avgMonthlySpend = totals.spend / timeFrameMonths;
+  const avgMonthlySpend = totals.spend / (timeFrameMonths || 1);
 
   const opportunityGap = useMemo(() => {
     if (models.length === 0 || avgMonthlySpend === 0) return 0;
     
+    // Determine if we should apply seasonality (only for short-term filters like last30)
+    const activeMonth = new Date().getMonth();
+    const seasonality = getSeasonalityMetrics(globalAggregate || data || []);
+    const getMultiplier = (ch: string) => {
+      if (dateFilter !== 'last30') return 1.0;
+      const sea = seasonality.find(s => s.channel === ch);
+      return sea?.monthlyIndex?.[activeMonth] ?? 1.0;
+    };
+
     // Apples-to-apples baseline: how much does the model project we get for our CURRENT spend allocation?
-    const currentModelRevenue = summaries.reduce((s, chSummary) => {
-      const m = models.find(x => x.channel === chSummary.channel);
-      const chMonthlySpend = chSummary.totalSpend / timeFrameMonths;
-      return s + (m ? projectRevenue(m, chMonthlySpend) : 0);
+    const currentModelRevenue = (summaries || []).reduce((s, chSummary) => {
+      const m = (models || []).find(x => x.channel === chSummary.channel);
+      const chMonthlySpend = (chSummary.totalSpend || 0) / timeFrameMonths;
+      return s + (m ? projectRevenue(m, chMonthlySpend, getMultiplier(chSummary.channel)) : 0);
     }, 0);
 
     // Optimal allocation projection
-    const optFractions = getOptimalAllocationNonLinear(models, avgMonthlySpend);
+    const optFractions = getOptimalAllocationNonLinear(models || [], avgMonthlySpend);
     const optRevenue = CHANNELS.reduce((s, ch) => {
-      const m = models.find(x => x.channel === ch);
-      return s + (m ? projectRevenue(m, (optFractions[ch] || 0) * avgMonthlySpend) : 0);
+      const m = (models || []).find(x => x.channel === ch);
+      return s + (m ? projectRevenue(m, (optFractions[ch] || 0) * avgMonthlySpend, getMultiplier(ch)) : 0);
     }, 0);
     
     return Math.max(0, optRevenue - currentModelRevenue);
-  }, [models, avgMonthlySpend, summaries, timeFrameMonths]);
+  }, [models, avgMonthlySpend, summaries, timeFrameMonths, globalAggregate, data, dateFilter]);
 
   const sorted = useMemo(() =>
     summaries.map((s, i) => ({ ...s, color: ORBIT_COLORS[i], origIdx: i }))
@@ -86,7 +114,7 @@ export default function Overview() {
   const blendedCAC = totals.customers > 0 ? totals.spend / totals.customers : 0;
 
   const metrics = [
-    { label: 'TOTAL REVENUE', value: formatINRCompact(totals.revenue), sub: `${yoyGrowth >= 0 ? '+' : ''}${yoyGrowth.toFixed(1)}% vs prior year`, subColor: yoyGrowth >= 0 ? '#34D399' : '#F87171', accent: '#34D399', size: 40 },
+    { label: 'TOTAL REVENUE', value: formatINRCompact(totals.revenue), sub: yoyLabel, subColor: yoyGrowth >= 0 ? '#34D399' : '#F87171', accent: '#34D399', size: 40 },
     { label: 'BLENDED CAC', value: formatINR(blendedCAC), sub: 'acquisition cost per customer', subColor: '#FBBF24', accent: '#FBBF24', size: 36, valueColor: '#FBBF24' },
     { label: 'MONTHLY OPPORTUNITY', value: formatINRCompact(opportunityGap), sub: 'unlocked via AI optimizer', subColor: 'var(--text-muted)', accent: '#34D399', size: 32, valueColor: '#34D399' },
     { label: 'TOTAL SPEND', value: formatINRCompact(totals.spend), sub: 'across 10 channels', subColor: 'var(--text-muted)', accent: '#60A5FA', size: 32 },
@@ -151,7 +179,14 @@ export default function Overview() {
 
         {/* Left KPI panel */}
         <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 16, padding: 28, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%', overflow: 'hidden' }}>
-          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>Jan 2023 – Dec 2025</p>
+          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>
+            {dateFilter === 'all' ? 'Jan 2023 – Dec 2025' : 
+             dateFilter === '2025' ? 'Year 2025' :
+             dateFilter === '2024' ? 'Year 2024' :
+             dateFilter === '2023' ? 'Year 2023' :
+             dateFilter === 'last30' ? 'Last 30 Days' :
+             dateFilter === 'last90' ? 'Last 90 Days' : 'Selected Timeframe'}
+          </p>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             {metrics.map((m, i) => (
               <div key={m.label} style={{ padding: '20px 0 20px 12px', borderBottom: i < metrics.length - 1 ? '1px solid var(--border-subtle)' : 'none', borderLeft: `3px solid ${m.accent}` }}>

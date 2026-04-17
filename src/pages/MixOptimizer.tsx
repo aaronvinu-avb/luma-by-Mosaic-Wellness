@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { ChannelName } from '@/components/ChannelName';
@@ -12,6 +12,7 @@ import {
   getMarginalROASCurve,
   projectRevenue,
   computeScenarios,
+  getTimeFrameMonths,
 } from '@/lib/calculations';
 import {
   Sliders,
@@ -63,8 +64,9 @@ const tooltipStyle = {
 };
 
 export default function MixOptimizer() {
-  const { data, aggregate, isLoading } = useMarketingData();
+  const { data, aggregate, globalAggregate, isLoading } = useMarketingData();
   const [budget, setBudget] = useState(5000000);
+  const [hasSetInitialBudget, setHasSetInitialBudget] = useState(false);
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [paused, setPaused] = useState<Set<string>>(new Set());
   const [activePill, setActivePill] = useState(1);
@@ -74,9 +76,23 @@ export default function MixOptimizer() {
 
   // ── Data derivations ──────────────────────────────────────────────────────
   const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
-  const models = useMemo(() => (aggregate || data) ? getChannelSaturationModels(aggregate || data!) : [], [data, aggregate]);
-  const seasonality = useMemo(() => (aggregate || data) ? getSeasonalityMetrics(aggregate || data!) : [], [data, aggregate]);
+  const models = useMemo(() => (globalAggregate || data) ? getChannelSaturationModels(globalAggregate || data!) : [], [data, globalAggregate]);
+  const seasonality = useMemo(() => (globalAggregate || data) ? getSeasonalityMetrics(globalAggregate || data!) : [], [data, globalAggregate]);
   const dowMetrics = useMemo(() => (aggregate || data) ? getDayOfWeekMetrics(aggregate || data!) : [], [data, aggregate]);
+  const timeFrameMonths = useMemo(() => getTimeFrameMonths(aggregate || data || []), [aggregate, data]);
+
+  const avgMonthlySpend = useMemo(() => {
+    if (summaries.length === 0) return 5000000;
+    const totalSpend = summaries.reduce((s, ch) => s + ch.totalSpend, 0);
+    return Math.round(totalSpend / (timeFrameMonths || 1));
+  }, [summaries, timeFrameMonths]);
+
+  useEffect(() => {
+    if (avgMonthlySpend !== 5000000 && !hasSetInitialBudget) {
+      setBudget(avgMonthlySpend);
+      setHasSetInitialBudget(true);
+    }
+  }, [avgMonthlySpend, hasSetInitialBudget]);
 
   const roasMap = useMemo(() => {
     const m: Record<string, number> = {};
@@ -87,8 +103,8 @@ export default function MixOptimizer() {
   const monthMultipliers = useMemo(() => {
     const mults: Record<string, number> = {};
     for (const ch of CHANNELS) {
-      const sea = seasonality.find(s => s.channel === ch);
-      mults[ch] = sea?.monthlyIndex[selectedMonth] || 1.0;
+      const sea = (seasonality || []).find(s => s.channel === ch);
+      mults[ch] = sea?.monthlyIndex?.[selectedMonth] ?? 1.0;
     }
     return mults;
   }, [seasonality, selectedMonth]);
