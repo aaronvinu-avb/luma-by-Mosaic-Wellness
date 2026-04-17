@@ -64,7 +64,7 @@ const tooltipStyle = {
 };
 
 export default function MixOptimizer() {
-  const { data, aggregate, globalAggregate, isLoading } = useMarketingData();
+  const { data, aggregate, globalAggregate, isLoading } = useMarketingData({ includeGlobalAggregate: true });
   const [budget, setBudget] = useState(5000000);
   const [hasSetInitialBudget, setHasSetInitialBudget] = useState(false);
   const [allocations, setAllocations] = useState<Record<string, number>>({});

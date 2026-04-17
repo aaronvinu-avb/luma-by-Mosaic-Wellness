@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { MiniSparkline } from '@/components/MiniSparkline';
 import { ChannelName } from '@/components/ChannelName';
 import { getChannelSummaries, getDailySparkline, getChannelSaturationModels, projectRevenue, getTimeFrameMonths } from '@/lib/calculations';
 import { SpendEfficiencyMatrix } from '@/components/SpendEfficiencyMatrix';
+import { LazySection } from '@/components/LazySection';
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import { ArrowUpDown, TrendingDown } from 'lucide-react';
@@ -24,18 +25,20 @@ const chartTooltipStyle = {
   labelStyle: { color: 'var(--text-secondary)' },
 };
 
-const CustomLegend = ({ payload }: any) => (
+const CustomLegend = memo(({ payload }: any) => (
   <div className="flex flex-wrap gap-3 justify-center mt-2">
     {payload?.map((entry: any, i: number) => (
       <ChannelName key={i} channel={entry.value} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)' }} />
     ))}
   </div>
-);
+));
 
 export default function ChannelPerformance() {
-  const { data, aggregate, globalAggregate, isLoading } = useMarketingData();
+  const { data, aggregate, globalAggregate, isLoading } = useMarketingData({ includeGlobalAggregate: true });
   const [sortKey, setSortKey] = useState<SortKey>('roas');
   const [sortAsc, setSortAsc] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 6;
 
   const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
 
@@ -48,6 +51,11 @@ export default function ChannelPerformance() {
     });
     return s;
   }, [summaries, sortKey, sortAsc]);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return sorted.slice(start, start + pageSize);
+  }, [sorted, currentPage]);
 
   const models = useMemo(() => (globalAggregate || data) ? getChannelSaturationModels(globalAggregate || data!) : [], [data, globalAggregate]);
 
@@ -75,6 +83,7 @@ export default function ChannelPerformance() {
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortAsc(!sortAsc);
     else { setSortKey(key); setSortAsc(false); }
+    setCurrentPage(1);
   };
 
   const roasBadge = (roas: number) => {
@@ -117,7 +126,7 @@ export default function ChannelPerformance() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((s, idx) => {
+              {paginatedRows.map((s, idx) => {
                 const badge = roasBadge(s.roas);
                 const rowBg = idx % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent';
                 return (
@@ -154,9 +163,32 @@ export default function ChannelPerformance() {
             </tbody>
           </table>
         </div>
+        <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>
+            Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, sorted.length)} of {sorted.length}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: currentPage === 1 ? 0.5 : 1 }}
+            >
+              Prev
+            </button>
+            <span style={{ fontFamily: 'Outfit', fontSize: 12, color: 'var(--text-secondary)' }}>{currentPage}/{totalPages}</span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: currentPage === totalPages ? 0.5 : 1 }}
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Diminishing Returns */}
+      <LazySection minHeight={480}>
       <div
         className="rounded-2xl card-enter"
         style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', boxShadow: 'var(--shadow-sm)', padding: 24, transition: 'transform var(--duration) var(--ease), box-shadow var(--duration) var(--ease), border-color var(--duration) var(--ease)' }}
@@ -213,8 +245,11 @@ export default function ChannelPerformance() {
           </LineChart>
         </ResponsiveContainer>
       </div>
+      </LazySection>
 
-      <SpendEfficiencyMatrix summaries={summaries} />
+      <LazySection minHeight={460}>
+        <SpendEfficiencyMatrix summaries={summaries} />
+      </LazySection>
     </div>
   );
 }

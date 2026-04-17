@@ -14,7 +14,7 @@ import { useAppContext } from '@/contexts/AppContext';
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
 
 export default function Overview() {
-  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource } = useMarketingData();
+  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource } = useMarketingData({ includeGlobalAggregate: true });
   const { dateFilter } = useAppContext();
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);

@@ -11,6 +11,10 @@ const CONCURRENCY_LIMIT = 6;
 const CACHE_KEY = 'marketing_data_v1';
 const CACHE_TTL = 1000 * 3600 * 24; // 24 hours
 
+interface UseMarketingDataOptions {
+  includeGlobalAggregate?: boolean;
+}
+
 // Track the data source so the UI can display it
 let _dataSource: 'api' | 'mock' | 'loading' | 'cached' = 'loading';
 
@@ -66,7 +70,8 @@ async function fetchAllPages(): Promise<MarketingRecord[]> {
   return allRecords;
 }
 
-export function useMarketingData() {
+export function useMarketingData(options: UseMarketingDataOptions = {}) {
+  const { includeGlobalAggregate = false } = options;
   const query = useQuery<MarketingRecord[]>({
     queryKey: ['marketing-data'],
     queryFn: async () => {
@@ -123,9 +128,10 @@ export function useMarketingData() {
 
   // globalAggregate is derived from the full unfiltered history (for training/YoY)
   const globalAggregate = useMemo(() => {
+    if (!includeGlobalAggregate) return undefined;
     if (!query.data) return undefined;
     return getAggregatedState(query.data);
-  }, [query.data]);
+  }, [query.data, includeGlobalAggregate]);
 
   // aggregate is always derived from the same data the pages see (for UI display)
   const aggregate = useMemo(() => {

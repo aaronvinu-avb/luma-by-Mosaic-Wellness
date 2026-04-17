@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { ChannelName } from '@/components/ChannelName';
@@ -22,6 +22,7 @@ import {
 } from 'recharts';
 import { exportToCSV } from '@/lib/exportData';
 import { COMPETITOR_EVENTS } from '@/lib/mockData';
+import { LazySection } from '@/components/LazySection';
 
 type Metric = 'roas' | 'revenue' | 'spend';
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -46,13 +47,13 @@ const darkCard = (delay = '0ms') => ({
   onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; },
 });
 
-const CustomLegend = ({ payload }: any) => (
+const CustomLegend = memo(({ payload }: any) => (
   <div className="flex flex-wrap gap-3 justify-center mt-2">
     {payload?.map((entry: any, i: number) => (
       <ChannelName key={i} channel={entry.value} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)' }} />
     ))}
   </div>
-);
+));
 
 export default function TrendAnalysis() {
   const { data, isLoading } = useMarketingData();
@@ -60,6 +61,8 @@ export default function TrendAnalysis() {
   const [selectedYears, setSelectedYears] = useState<Set<number>>(new Set([2023, 2024, 2025]));
   const [selectedSeasonChannel, setSelectedSeasonChannel] = useState<string>(CHANNELS[5]); // Email default
   const [showCompetitorOverlay, setShowCompetitorOverlay] = useState(false);
+  const [spikePage, setSpikePage] = useState(1);
+  const spikePageSize = 8;
 
   const monthly = useMemo(() => data ? getMonthlyAggregation(data) : {}, [data]);
   const seasonalityMetrics = useMemo(() => data ? getSeasonalityMetrics(data) : [], [data]);
@@ -182,6 +185,11 @@ export default function TrendAnalysis() {
     }
     return areas;
   }, [spikeData]);
+  const spikePeriodsPage = useMemo(() => {
+    const start = (spikePage - 1) * spikePageSize;
+    return spikeData.periods.slice(start, start + spikePageSize);
+  }, [spikeData.periods, spikePage]);
+  const spikeTotalPages = Math.max(1, Math.ceil(spikeData.periods.length / spikePageSize));
 
   if (isLoading) return <DashboardSkeleton />;
 
@@ -333,6 +341,7 @@ export default function TrendAnalysis() {
         </ResponsiveContainer>
       </div>
 
+      <LazySection minHeight={280}>
       <div {...darkCard('140ms')}>
         <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Best Month per Channel</h2>
         <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
@@ -348,7 +357,9 @@ export default function TrendAnalysis() {
           ))}
         </div>
       </div>
+      </LazySection>
 
+      <LazySection minHeight={420}>
       <div {...darkCard('210ms')}>
         <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Day-of-Week Performance</h2>
         <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
@@ -403,7 +414,9 @@ export default function TrendAnalysis() {
           </div>
         </div>
       </div>
+      </LazySection>
 
+      <LazySection minHeight={420}>
       <div {...darkCard('280ms')}>
         <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
           <TrendingUp size={18} style={{ color: '#E8803A' }} />
@@ -441,7 +454,7 @@ export default function TrendAnalysis() {
                 </tr>
               </thead>
               <tbody>
-                {spikeData.periods.map((p, i) => (
+                {spikePeriodsPage.map((p, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                     <td style={{ padding: '13px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{p.week}</td>
                     <td style={{ padding: '13px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINRCompact(p.revenue)}</td>
@@ -461,10 +474,34 @@ export default function TrendAnalysis() {
                 ))}
               </tbody>
             </table>
+            <div className="flex items-center justify-between mt-3 px-1">
+              <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>
+                Showing {(spikePage - 1) * spikePageSize + 1}-{Math.min(spikePage * spikePageSize, spikeData.periods.length)} of {spikeData.periods.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSpikePage((p) => Math.max(1, p - 1))}
+                  disabled={spikePage === 1}
+                  style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: spikePage === 1 ? 0.5 : 1 }}
+                >
+                  Prev
+                </button>
+                <span style={{ fontFamily: 'Outfit', fontSize: 12, color: 'var(--text-secondary)' }}>{spikePage}/{spikeTotalPages}</span>
+                <button
+                  onClick={() => setSpikePage((p) => Math.min(spikeTotalPages, p + 1))}
+                  disabled={spikePage === spikeTotalPages}
+                  style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: spikePage === spikeTotalPages ? 0.5 : 1 }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
+      </LazySection>
 
+      <LazySection minHeight={480}>
       <div {...darkCard('350ms')}>
         <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
           <Calendar size={18} style={{ color: '#E8803A' }} />
@@ -526,7 +563,9 @@ export default function TrendAnalysis() {
           </span>
         </div>
       </div>
+      </LazySection>
 
+      <LazySection minHeight={340}>
       <div {...darkCard('420ms')}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -590,6 +629,7 @@ export default function TrendAnalysis() {
           );
         })()}
       </div>
+      </LazySection>
     </div>
   );
 }
