@@ -1,5 +1,5 @@
-const VH = 28;
-const ICON_SIZE = 20;
+const VH = 30;
+const ICON_SIZE = 22;
 
 interface LumaLogoProps {
   scale?: number;
@@ -7,7 +7,7 @@ interface LumaLogoProps {
 }
 
 export function LumaLogo({ scale = 1, showWordmark = true }: LumaLogoProps) {
-  const vw = showWordmark ? 130 : ICON_SIZE;
+  const vw = showWordmark ? 138 : ICON_SIZE;
   return (
     <svg
       width={vw * scale}
@@ -15,19 +15,19 @@ export function LumaLogo({ scale = 1, showWordmark = true }: LumaLogoProps) {
       viewBox={`0 0 ${vw} ${VH}`}
       fill="none"
     >
-      <rect x={1} y={5} width={18} height={18} rx={5} fill="#2A2825" />
-      <path d="M6.5 9.5V18.5H13V16H9.5V9.5H6.5Z" fill="#E8803A" />
-      <path d="M13 10.5C15.3 10.5 17.2 12.4 17.2 14.7C17.2 17 15.3 18.9 13 18.9" stroke="#E8803A" strokeWidth={1.8} strokeLinecap="round" fill="none" />
-      <circle cx={13} cy={18.9} r={1.1} fill="#4A4640" />
+      <rect x={1} y={4} width={20} height={20} rx={6} fill="#2A2825" />
+      <path d="M7 9.2V19.2H14.5V16.7H9.8V9.2H7Z" fill="#E8803A" />
+      <path d="M14.6 10.5C17.1 10.5 19.1 12.5 19.1 15C19.1 17.5 17.1 19.5 14.6 19.5" stroke="#E8803A" strokeWidth={2} strokeLinecap="round" fill="none" />
+      <circle cx={14.6} cy={19.5} r={1.15} fill="#4A4640" />
       {showWordmark && (
         <text
-          x={28}
-          y={20}
+          x={31}
+          y={21}
           fontFamily="Outfit"
-          fontSize={17}
-          fontWeight={700}
+          fontSize={18}
+          fontWeight={800}
           fill="currentColor"
-          letterSpacing="-0.025em"
+          letterSpacing="-0.03em"
         >
           Luma
         </text>

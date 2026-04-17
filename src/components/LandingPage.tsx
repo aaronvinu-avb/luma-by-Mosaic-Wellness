@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 
-const ICON_SIZE = 72;
+const ICON_SIZE = 86;
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -67,10 +67,10 @@ export function LandingPage() {
           }}
         >
           <svg width={ICON_SIZE} height={ICON_SIZE} viewBox="0 0 72 72" fill="none">
-            <rect x="12" y="12" width="48" height="48" rx="14" fill="#2A2825" />
-            <path d="M24 22V50H41V43.5H31.5V22H24Z" fill="#E8763A" />
-            <path d="M41 25C47 25 51.5 29.5 51.5 35.5C51.5 41.5 47 46 41 46" stroke="#E8763A" strokeWidth="4.4" strokeLinecap="round" fill="none" />
-            <circle cx="41" cy="46" r="3.1" fill="#4A4640" />
+            <rect x="10" y="10" width="52" height="52" rx="16" fill="#2A2825" />
+            <path d="M23 21V51H42V44H31.5V21H23Z" fill="#E8763A" />
+            <path d="M42 24.5C48.5 24.5 53.5 29.5 53.5 36C53.5 42.5 48.5 47.5 42 47.5" stroke="#E8763A" strokeWidth="4.8" strokeLinecap="round" fill="none" />
+            <circle cx="42" cy="47.5" r="3.2" fill="#4A4640" />
           </svg>
         </div>
 
@@ -78,10 +78,10 @@ export function LandingPage() {
         <h1
           style={{
             fontFamily: "'Outfit', sans-serif",
-            fontSize: 'clamp(4rem, 9vw, 8rem)',
-            fontWeight: 800,
+            fontSize: 'clamp(4.4rem, 9.5vw, 8.2rem)',
+            fontWeight: 900,
             color: 'var(--text-primary)',
-            letterSpacing: '-0.04em',
+            letterSpacing: '-0.035em',
             lineHeight: 1,
             margin: 0,
             animation: 'pu-fade-up 0.8s cubic-bezier(0.16,1,0.3,1) 0.1s both',
@@ -98,7 +98,7 @@ export function LandingPage() {
             fontWeight: 600,
             color: '#E8763A',
             textTransform: 'uppercase',
-            letterSpacing: '0.15em',
+            letterSpacing: '0.13em',
             margin: '16px 0 0',
             animation: 'pu-fade-up 0.8s cubic-bezier(0.16,1,0.3,1) 0.2s both',
           }}

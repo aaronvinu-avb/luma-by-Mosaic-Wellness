@@ -70,9 +70,9 @@ export function AppSidebar() {
       <SidebarContent style={{ backgroundColor: 'var(--bg-root)', borderRight: '1px solid var(--border-subtle)' }}>
         <SidebarHeader className="p-5 pb-2 text-[var(--text-primary)]">
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%', overflow: 'hidden' }}>
-            <LumaLogo scale={1.1} showWordmark={true} />
+            <LumaLogo scale={1.16} showWordmark={true} />
           </div>
-          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, letterSpacing: '0.02em', marginTop: 4 }}>by Mosaic Wellness</p>
+          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.02em', marginTop: 6, marginLeft: 44 }}>by Mosaic Wellness</p>
           <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 18 }} />
         </SidebarHeader>
 
