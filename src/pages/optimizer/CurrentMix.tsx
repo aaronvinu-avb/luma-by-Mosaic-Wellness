@@ -308,7 +308,7 @@ export default function CurrentMix() {
           {
             label: 'Blended ROAS',
             value: `${currentPlan.blendedROAS.toFixed(2)}x`,
-            sub: 'Weighted portfolio return',
+            sub: 'Spend-weighted return',
             accent: '#E8803A',
           },
           {
@@ -350,7 +350,7 @@ export default function CurrentMix() {
       }}>
         {Math.round(totalHistoricalMonths)}mo history
         {dataRange ? ` · ${dataRange.min} – ${dataRange.max}` : ''}
-        {' · '}{dataSource === 'api' ? 'Live' : dataSource === 'cached' ? 'Cached' : 'Sample data'}
+        {' · '}{dataSource === 'api' ? 'Live' : dataSource === 'cached' ? 'Cached' : 'Demo data'}
       </p>
 
       {/* ── D. Allocation Block ──────────────────────────────────────────────── */}
@@ -680,7 +680,7 @@ export default function CurrentMix() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0, borderRadius: 8, border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
                     {[
                       { k: 'Tuned ROAS',       v: `${dExpl.tunedROAS.toFixed(2)}x` },
-                      { k: 'Portfolio median', v: `${dExpl.portfolioROAS.toFixed(2)}x` },
+                      { k: 'Blended median',   v: `${dExpl.portfolioROAS.toFixed(2)}x` },
                       { k: 'ROAS at current',  v: `${dRow?.roas?.toFixed(2) ?? '—'}x` },
                       { k: 'Marginal ROAS',    v: `${dRow?.marginalROAS?.toFixed(2) ?? '—'}x` },
                     ].map(({ k, v }, i) => (
@@ -751,10 +751,10 @@ export default function CurrentMix() {
                 backgroundColor: 'var(--bg-root)',
                 borderRadius: '0 0 12px 0',
               }}>
-                {/* Portfolio total */}
+                {/* Allocation total */}
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                    <span style={{ ...T.overline, fontSize: 9 }}>Portfolio total</span>
+                    <span style={{ ...T.overline, fontSize: 9 }}>Allocation total</span>
                     <span style={{ ...T.num, fontSize: 12, fontWeight: 800, color: drawerBarColor }}>
                       {pendingTotalPct}%
                     </span>
@@ -913,7 +913,7 @@ export default function CurrentMix() {
             Ready to explore the recommendation?
           </p>
           <p style={{ ...T.body, fontSize: 12, marginTop: 4 }}>
-            The next step shows how the model would redistribute this budget to improve projected return.
+            The next step shows how the model would redistribute this budget to improve forecast return.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexShrink: 0 }}>

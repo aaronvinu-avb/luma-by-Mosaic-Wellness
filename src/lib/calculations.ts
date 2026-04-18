@@ -1131,7 +1131,7 @@ export function generateChannelInsights(
         channel: ch,
         type: 'boost',
         headline: `Increase ${ch} budget by ~${Math.round((optFrac - curFrac) * 100)}%`,
-        rationale: `Historical ROAS of ${summary.roas.toFixed(2)}x sits ${Math.round((summary.roas / avgROAS - 1) * 100)}% above portfolio average. Not yet saturated — marginal ROAS is still ${marginalNow.toFixed(2)}x. The optimizer recommends ${Math.round(optFrac * 100)}% allocation.`,
+        rationale: `Historical ROAS of ${summary.roas.toFixed(2)}x sits ${Math.round((summary.roas / avgROAS - 1) * 100)}% above the blended average. Not yet saturated — marginal ROAS is still ${marginalNow.toFixed(2)}x. The optimizer recommends ${Math.round(optFrac * 100)}% allocation.`,
         priority: summary.roas > avgROAS * 1.6 ? 'high' : 'medium',
       });
     }
@@ -1141,7 +1141,7 @@ export function generateChannelInsights(
         channel: ch,
         type: 'cut',
         headline: `Cut ${ch} spend by ~${Math.round((curFrac - optFrac) * 100)}%`,
-        rationale: `ROAS of ${summary.roas.toFixed(2)}x is ${Math.round((1 - summary.roas / avgROAS) * 100)}% below portfolio average. Reallocating freed budget to ${summaries.reduce((b, c) => c.roas > b.roas ? c : b, summaries[0]).channel} could lift overall return.`,
+        rationale: `ROAS of ${summary.roas.toFixed(2)}x is ${Math.round((1 - summary.roas / avgROAS) * 100)}% below the blended average. Reallocating freed budget to ${summaries.reduce((b, c) => c.roas > b.roas ? c : b, summaries[0]).channel} could lift blended return.`,
         priority: 'medium',
       });
     }

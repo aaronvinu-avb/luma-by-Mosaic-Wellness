@@ -147,7 +147,7 @@ export default function WhyItWorks() {
         }}>
           Fitted from {Math.round(totalHistoricalMonths)} months of history
           {dataRange ? ` · ${dataRange.min} – ${dataRange.max}` : ''}
-          {' · '}{dataSource === 'api' ? 'Live' : dataSource === 'cached' ? 'Cached' : 'Sample data'}
+          {' · '}{dataSource === 'api' ? 'Live' : dataSource === 'cached' ? 'Cached' : 'Demo data'}
         </p>
       </div>
 
@@ -561,9 +561,9 @@ export default function WhyItWorks() {
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 14 }}>
 
-          {/* Portfolio-level confidence */}
+          {/* Blended signal quality */}
           <div style={{ ...CARD }}>
-            <p style={{ ...T.overline, marginBottom: 14 }}>Portfolio signal quality</p>
+            <p style={{ ...T.overline, marginBottom: 14 }}>Blended signal quality</p>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 16 }}>
               <p style={{ ...T.num, fontSize: 40, fontWeight: 900, color: confMeta.color, letterSpacing: '-0.04em', margin: 0, lineHeight: 1 }}>
                 {portfolioPct}%
@@ -583,7 +583,7 @@ export default function WhyItWorks() {
             <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
               <p style={{ ...T.body, fontSize: 12, lineHeight: 1.55 }}>
                 {confidence.tier === 'high'
-                  ? 'Strong portfolio-wide signal supports confident reallocation. The model has sufficient data to make meaningful distinctions between channel efficiency levels.'
+                  ? 'Strong blended signal supports confident reallocation. The model has sufficient data to make meaningful distinctions between channel efficiency levels.'
                   : confidence.tier === 'moderate'
                   ? 'Moderate confidence. Some channels have thin or volatile data, so the model applies stability controls to limit over-aggressive changes.'
                   : 'Exploratory confidence. Data is limited across several channels — treat this recommendation as directional guidance, not a precise answer.'}

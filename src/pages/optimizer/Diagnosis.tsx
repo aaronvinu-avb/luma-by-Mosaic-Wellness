@@ -291,9 +291,9 @@ export default function Diagnosis() {
                         <div style={{ padding: '12px 14px', backgroundColor: 'var(--bg-card)', borderRadius: 9, border: '1px solid var(--border-subtle)' }}>
                           <p style={{ ...T.overline, fontSize: 9, marginBottom: 10 }}>Performance Signal</p>
                           {expl && [
-                            { k: 'Tuned ROAS',       v: `${expl.tunedROAS.toFixed(2)}x` },
-                            { k: 'Portfolio median', v: `${expl.portfolioROAS.toFixed(2)}x` },
-                            { k: 'vs portfolio', v: (() => {
+                            { k: 'Tuned ROAS',     v: `${expl.tunedROAS.toFixed(2)}x` },
+                            { k: 'Blended median', v: `${expl.portfolioROAS.toFixed(2)}x` },
+                            { k: 'vs blended', v: (() => {
                               const gap = ((expl.tunedROAS - expl.portfolioROAS) / expl.portfolioROAS) * 100;
                               return gap > 5 ? `+${Math.round(gap)}% above` : gap < -5 ? `${Math.round(gap)}% below` : 'In line';
                             })() },
@@ -583,7 +583,7 @@ export default function Diagnosis() {
                       <p style={{ ...T.overline, fontSize: 9, marginBottom: 9 }}>Performance Signal</p>
                       {expl ? [
                         { k: 'Tuned ROAS', v: `${expl.tunedROAS.toFixed(2)}x` },
-                        { k: 'Portfolio', v: `${expl.portfolioROAS.toFixed(2)}x` },
+                        { k: 'Blended',    v: `${expl.portfolioROAS.toFixed(2)}x` },
                         { k: 'Confidence', v: `${Math.round(expl.efficiencyConfidence * 100)}%` },
                       ].map(({ k, v }) => (
                         <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
@@ -617,7 +617,7 @@ export default function Diagnosis() {
                     <div style={{ padding: '12px 14px', backgroundColor: 'var(--bg-card)', borderRadius: 9, border: `1px solid ${st.color}22` }}>
                       <p style={{ ...T.overline, fontSize: 9, marginBottom: 9 }}>Assessment</p>
                       <p style={{ ...T.body, fontSize: 12, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
-                        {d?.explanation || `${ch} is operating within a normal efficiency range relative to the portfolio.`}
+                        {d?.explanation || `${ch} is operating within a normal efficiency range relative to the blended median.`}
                       </p>
                       {isFlagged && d?.reasonCode && (
                         <span style={{ ...badgeStyle(st.color), marginTop: 9 }}>
@@ -702,7 +702,7 @@ export default function Diagnosis() {
               {takeaway}
             </p>
             <p style={{ ...T.body, fontSize: 11, marginTop: 10, fontStyle: 'italic', lineHeight: 1.45 }}>
-              The Recommended Mix page will show how the model would reallocate this budget and the projected improvement.
+              The Recommended Mix page will show how the model would reallocate this budget and the forecast improvement.
             </p>
           </div>
         </div>
@@ -720,7 +720,7 @@ export default function Diagnosis() {
             Diagnosis complete. Ready to see the recommended reallocation?
           </p>
           <p style={{ ...T.body, fontSize: 12, marginTop: 5 }}>
-            The next step shows how the model would redistribute this budget across channels, with per-channel rationale and projected uplift.
+            The next step shows how the model would redistribute this budget across channels, with per-channel rationale and forecast uplift.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>

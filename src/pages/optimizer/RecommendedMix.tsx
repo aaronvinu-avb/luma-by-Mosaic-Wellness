@@ -453,9 +453,9 @@ export default function RecommendedMix() {
                       {expl ? (
                         <>
                           {[
-                            { k: 'Tuned ROAS',       v: `${expl.tunedROAS.toFixed(2)}x` },
-                            { k: 'Portfolio median', v: `${expl.portfolioROAS.toFixed(2)}x` },
-                            { k: 'vs portfolio',     v: (() => {
+                            { k: 'Tuned ROAS',     v: `${expl.tunedROAS.toFixed(2)}x` },
+                            { k: 'Blended median', v: `${expl.portfolioROAS.toFixed(2)}x` },
+                            { k: 'vs blended',     v: (() => {
                               const gap = (expl.tunedROAS - expl.portfolioROAS) / expl.portfolioROAS * 100;
                               return gap > 5 ? `+${Math.round(gap)}% above` : gap < -5 ? `${Math.round(gap)}% below` : 'In line';
                             })() },
@@ -543,8 +543,8 @@ export default function RecommendedMix() {
             </div>
             <p style={{ ...T.body, fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
               {topGainer
-                ? `The biggest projected gain comes from increasing ${topGainer.channel} allocation from ${topGainer.currentPct.toFixed(1)}% to ${topGainer.recommendedPct.toFixed(1)}%. ${topGainer.primaryReasonCode}.`
-                : 'No single channel dominates the improvement — gains are distributed across the portfolio.'}
+                ? `The biggest forecast gain comes from increasing ${topGainer.channel} allocation from ${topGainer.currentPct.toFixed(1)}% to ${topGainer.recommendedPct.toFixed(1)}%. ${topGainer.primaryReasonCode}.`
+                : 'No single channel dominates the improvement — gains are distributed across the mix.'}
             </p>
           </div>
 
@@ -570,7 +570,7 @@ export default function RecommendedMix() {
             <p style={{ ...T.body, fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
               {nearOptimal
                 ? `Your current mix is already near the model optimum at ${currentPlan.blendedROAS.toFixed(2)}x blended ROAS. No major reallocation is needed unless strategic priorities change.`
-                : `Reallocating to the recommended mix is projected to improve blended ROAS from ${currentPlan.blendedROAS.toFixed(2)}x to ${optimizedPlan.blendedROAS.toFixed(2)}x.`}
+                : `Reallocating to the recommended mix is forecast to improve blended ROAS from ${currentPlan.blendedROAS.toFixed(2)}x to ${optimizedPlan.blendedROAS.toFixed(2)}x.`}
               {highVolChannels.length > 0
                 ? ` Note: ${highVolChannels.join(', ')} ${highVolChannels.length > 1 ? 'have' : 'has'} high signal volatility — treat ${highVolChannels.length > 1 ? 'these' : 'this'} channel's increase cautiously.`
                 : ''}

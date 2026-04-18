@@ -166,7 +166,7 @@ export default function ScenarioPlanner() {
 
               <div className="space-y-3">
                 <div>
-                  <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>Projected Monthly Revenue</p>
+                  <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>Forecast Monthly Revenue</p>
                   <p style={{ fontFamily: 'Outfit', fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                     {formatINRCompact(s.revenue)}
                   </p>

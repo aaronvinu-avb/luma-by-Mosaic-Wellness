@@ -113,7 +113,7 @@ export default function FinancialInsights() {
         <div className="financial-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginBottom: 20 }}>
           {[
             { label: 'Net Contribution', value: formatINRCompact(totals.profit), sub: 'Modeled post-marketing profit', icon: TrendingUp, color: '#34D399' },
-            { label: 'Portfolio ROI', value: `${portfolioRoi.toFixed(1)}%`, sub: 'Efficiency multiplier', icon: ArrowUpRight, color: '#E8803A' },
+            { label: 'Blended ROI', value: `${portfolioRoi.toFixed(1)}%`, sub: 'Efficiency multiplier', icon: ArrowUpRight, color: '#E8803A' },
           ].map((s, i) => (
             <div key={`est-${i}`} style={{ backgroundColor: 'rgba(232, 128, 58, 0.03)', border: '1px dashed rgba(232, 128, 58, 0.3)', borderRadius: 16, padding: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>

@@ -468,11 +468,11 @@ export function useOptimizerModel(): OptimizerModelOutput {
         : 'Receiving more than efficiency justifies';
       else if (status === 'under-scaled') reasonCode = 'High efficiency, under-invested';
 
-      let explanation = `${ch} is receiving ${curPct.toFixed(0)}% of budget (historical: ${histPct.toFixed(0)}%) with a ${channelROAS.toFixed(2)}x return profile — near the portfolio median of ${portfolioMedianROAS.toFixed(2)}x.`;
+      let explanation = `${ch} is receiving ${curPct.toFixed(0)}% of budget (historical: ${histPct.toFixed(0)}%) with a ${channelROAS.toFixed(2)}x return profile — near the blended median of ${portfolioMedianROAS.toFixed(2)}x.`;
       if (isSaturated) {
-        explanation = `${ch} shows diminishing returns. Marginal ROAS at current spend is ${marg.toFixed(2)}x — each additional rupee returns less than ₹1. Reducing spend here and reallocating to under-invested channels can improve portfolio return.`;
+        explanation = `${ch} shows diminishing returns. Marginal ROAS at current spend is ${marg.toFixed(2)}x — each additional rupee returns less than ₹1. Reducing spend here and reallocating to under-invested channels can improve blended return.`;
       } else if (status === 'over-scaled') {
-        explanation = `${ch} is receiving ${curPct.toFixed(0)}% but its return profile (${channelROAS.toFixed(2)}x) doesn't fully justify this relative to the portfolio median (${portfolioMedianROAS.toFixed(2)}x). The model would reduce this allocation.`;
+        explanation = `${ch} is receiving ${curPct.toFixed(0)}% but its return profile (${channelROAS.toFixed(2)}x) doesn't fully justify this relative to the blended median (${portfolioMedianROAS.toFixed(2)}x). The model would reduce this allocation.`;
       } else if (status === 'under-scaled') {
         explanation = `${ch} has a strong ${channelROAS.toFixed(2)}x return profile but is receiving only ${curPct.toFixed(0)}% of budget. There may be room to scale before hitting diminishing returns.`;
       }
