@@ -191,6 +191,21 @@ main::-webkit-scrollbar-thumb:hover {
   animation: card-enter 360ms var(--ease) both;
 }
 
+/* ── Sidebar nav hover states ───────────────────────────────────────────── */
+/* Applied on the <a> elements rendered by NavLink inside the sidebar */
+[data-sidebar="menu-button"] a:hover {
+  background-color: rgba(232, 128, 58, 0.06) !important;
+  color: var(--text-primary) !important;
+}
+[data-sidebar="menu-button"] a:hover svg {
+  color: rgba(232, 128, 58, 0.7) !important;
+}
+/* Focus ring — keyboard nav */
+[data-sidebar="menu-button"] a:focus-visible {
+  outline: 2px solid rgba(232, 128, 58, 0.4);
+  outline-offset: 1px;
+}
+
 @media (max-width: 768px) {
   .app-main {
     padding: 20px !important;

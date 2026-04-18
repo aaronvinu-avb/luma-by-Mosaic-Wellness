@@ -9,7 +9,6 @@ import {
   Trophy,
   LayoutDashboard,
   Sliders,
-  Activity,
   Stethoscope,
   Sparkles,
   HelpCircle,
@@ -17,6 +16,7 @@ import {
 } from "lucide-react";
 import { LumaLogo } from '@/components/LumaLogo';
 import { NavLink } from '@/components/NavLink';
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useLocation } from 'react-router-dom';
 import {
   Sidebar,
@@ -29,7 +29,6 @@ import {
   SidebarHeader,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { ThemeToggle } from "@/components/ThemeToggle";
 
 // ── Nav definition ──────────────────────────────────────────────────────────
 
@@ -37,7 +36,7 @@ type NavItem = {
   title: string;
   url: string;
   icon: React.ElementType;
-  indent?: boolean; // child page within a parent section
+  indent?: boolean;
 };
 
 type NavGroup = {
@@ -47,32 +46,32 @@ type NavGroup = {
 
 const navGroups: NavGroup[] = [
   {
-    label: 'MEASUREMENT',
+    label: 'Measurement',
     items: [
-      { title: 'Overview',                url: '/dashboard',  icon: LayoutDashboard },
-      { title: 'Channel Performance',     url: '/channels',   icon: BarChart3 },
-      { title: 'Traffic Quality Pipeline',url: '/funnel',     icon: Filter },
+      { title: 'Overview',                 url: '/dashboard',  icon: LayoutDashboard },
+      { title: 'Channel Performance',      url: '/channels',   icon: BarChart3 },
+      { title: 'Traffic Quality Pipeline', url: '/funnel',     icon: Filter },
     ],
   },
   {
-    label: 'STRATEGY',
+    label: 'Strategy',
     items: [
       { title: 'Scenario Planner', url: '/scenarios', icon: CalendarRange },
       { title: 'Budget Tracker',   url: '/budget',    icon: Wallet },
     ],
   },
   {
-    label: 'MIX OPTIMISER',
+    label: 'Mix Optimiser',
     items: [
-      { title: 'Current Mix',      url: '/optimizer/current-mix', icon: Sliders,       indent: true },
-      { title: 'Diagnosis',        url: '/optimizer/diagnosis',   icon: Stethoscope,   indent: true },
-      { title: 'Recommended Mix',  url: '/optimizer/recommended', icon: Sparkles,      indent: true },
-      { title: 'Why It Works',     url: '/optimizer/why',         icon: HelpCircle,    indent: true },
-      { title: 'Budget Scenarios', url: '/optimizer/scenarios',   icon: LineChart,     indent: true },
+      { title: 'Current Mix',      url: '/optimizer/current-mix', icon: Sliders,     indent: true },
+      { title: 'Diagnosis',        url: '/optimizer/diagnosis',   icon: Stethoscope, indent: true },
+      { title: 'Recommended Mix',  url: '/optimizer/recommended', icon: Sparkles,    indent: true },
+      { title: 'Why It Works',     url: '/optimizer/why',         icon: HelpCircle,  indent: true },
+      { title: 'Budget Scenarios', url: '/optimizer/scenarios',   icon: LineChart,   indent: true },
     ],
   },
   {
-    label: 'INTELLIGENCE',
+    label: 'Intelligence',
     items: [
       { title: 'Financial Insights', url: '/financials',   icon: DollarSign },
       { title: 'Trend Analysis',     url: '/trends',       icon: TrendingUp },
@@ -82,103 +81,312 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-// ── Component ───────────────────────────────────────────────────────────────
+// ── Derived helpers ───────────────────────────────────────────────────────────
+
+/** True when the current route belongs to the Mix Optimiser group */
+function isMixOptimizerGroup(pathname: string) {
+  return pathname.startsWith('/optimizer');
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const location = useLocation();
+  const location  = useLocation();
+  const inOptimizer = isMixOptimizerGroup(location.pathname);
 
   return (
-    <Sidebar className="border-r-0 w-64 shadow-2xl">
-      <SidebarContent style={{ backgroundColor: 'var(--bg-root)', borderRight: '1px solid var(--border-subtle)' }}>
-        <SidebarHeader className="p-5 pb-2 text-[var(--text-primary)]">
-          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%', overflow: 'hidden' }}>
-            <LumaLogo scale={1.16} showWordmark={true} />
+    <Sidebar className="border-r-0 w-[232px] shadow-2xl">
+      <SidebarContent style={{
+        backgroundColor: 'var(--bg-root)',
+        borderRight: '1px solid var(--border-subtle)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        paddingBottom: 72, /* room for footer */
+      }}>
+
+        {/* ── Brand Header ────────────────────────────────────────────── */}
+        <SidebarHeader style={{ padding: '22px 18px 0', flexShrink: 0 }}>
+          {/* Logo row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+            <LumaLogo scale={1.0} showWordmark={true} />
           </div>
-          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.02em', marginTop: 6, marginLeft: 44 }}>
+
+          {/* Byline */}
+          <p style={{
+            fontFamily: 'Plus Jakarta Sans',
+            fontSize: 10,
+            fontWeight: 500,
+            color: 'var(--text-muted)',
+            letterSpacing: '0.025em',
+            marginTop: 3,
+            marginLeft: 1,
+            lineHeight: 1,
+          }}>
             by Mosaic Wellness
           </p>
-          <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 18 }} />
+
+          {/* Separator */}
+          <div style={{
+            margin: '18px 0 0',
+            height: 1,
+            background: 'linear-gradient(90deg, var(--border-strong) 0%, transparent 85%)',
+          }} />
         </SidebarHeader>
 
-        {navGroups.map((group) => (
-          <SidebarGroup key={group.label} style={{ padding: '0 8px' }}>
-            {!collapsed && (
-              <p style={{
-                fontFamily: 'Outfit', fontSize: 9, fontWeight: 600, color: 'var(--text-muted)',
-                textTransform: 'uppercase', letterSpacing: '0.1em',
-                padding: '16px 12px 4px',
-              }}>
-                {group.label}
-              </p>
-            )}
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {group.items.map((item) => {
-                  const isActive = item.url === '/dashboard'
-                    ? location.pathname === '/dashboard'
-                    : location.pathname === item.url || location.pathname.startsWith(`${item.url}/`);
+        {/* ── Navigation groups ────────────────────────────────────────── */}
+        <div style={{ flex: 1, paddingTop: 6 }}>
+          {navGroups.map((group) => {
+            const isMixGroup = group.label === 'Mix Optimiser';
 
-                  return (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild>
-                        <NavLink
-                          to={item.url}
-                          end={item.url === '/'}
-                          className="flex items-center gap-2.5 transition-all"
-                          style={{
-                            padding: item.indent ? '7px 12px 7px 24px' : '8px 12px',
-                            borderRadius: 10,
-                            backgroundColor: isActive ? 'var(--border-subtle)' : 'transparent',
-                            color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                            fontSize: item.indent ? 12 : 13,
-                            fontWeight: isActive ? 600 : 500,
-                            transition: '140ms',
-                          }}
-                          activeClassName=""
-                        >
-                          <item.icon
-                            style={{
-                              width: item.indent ? 13 : 15,
-                              height: item.indent ? 13 : 15,
-                              flexShrink: 0,
-                              color: isActive ? '#E8803A' : 'var(--text-secondary)',
-                            }}
-                          />
-                          {!collapsed && (
-                            <span className="flex items-center gap-2">
-                              {item.title}
-                            </span>
-                          )}
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ))}
+            return (
+              <SidebarGroup key={group.label} style={{ padding: '0 10px', marginBottom: isMixGroup ? 4 : 0 }}>
+
+                {/* Section label */}
+                {!collapsed && (
+                  <p style={{
+                    fontFamily: 'Outfit',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    color: isMixGroup && inOptimizer ? 'rgba(232,128,58,0.6)' : 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.12em',
+                    padding: '18px 8px 5px',
+                    lineHeight: 1,
+                    transition: 'color 200ms',
+                  }}>
+                    {group.label}
+                  </p>
+                )}
+
+                <SidebarGroupContent>
+                  {/* Mix Optimiser: wrap children in a grouped rail */}
+                  {isMixGroup && !collapsed ? (
+                    <div style={{
+                      position: 'relative',
+                      paddingLeft: 12,
+                    }}>
+                      {/* Vertical connector rail */}
+                      <div style={{
+                        position: 'absolute',
+                        left: 18,
+                        top: 4,
+                        bottom: 4,
+                        width: 1,
+                        backgroundColor: inOptimizer
+                          ? 'rgba(232,128,58,0.22)'
+                          : 'var(--border-strong)',
+                        borderRadius: 1,
+                        transition: 'background-color 200ms',
+                      }} />
+
+                      <SidebarMenu>
+                        {group.items.map((item) => {
+                          const isActive = location.pathname === item.url
+                            || location.pathname.startsWith(`${item.url}/`);
+
+                          return (
+                            <SidebarMenuItem key={item.title}>
+                              <SidebarMenuButton asChild>
+                                <NavLink
+                                  to={item.url}
+                                  end={false}
+                                  activeClassName=""
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    padding: '6px 9px 6px 14px',
+                                    borderRadius: 7,
+                                    fontSize: 12,
+                                    fontFamily: 'Plus Jakarta Sans',
+                                    fontWeight: isActive ? 600 : 400,
+                                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                    backgroundColor: isActive ? 'rgba(232,128,58,0.09)' : 'transparent',
+                                    textDecoration: 'none',
+                                    transition: 'background-color 120ms, color 120ms',
+                                    position: 'relative',
+                                    marginBottom: 1,
+                                    outline: 'none',
+                                  }}
+                                >
+                                  {/* Active left accent tick */}
+                                  {isActive && (
+                                    <span style={{
+                                      position: 'absolute',
+                                      left: -1,
+                                      top: '50%',
+                                      transform: 'translateY(-50%)',
+                                      width: 2,
+                                      height: 14,
+                                      borderRadius: 2,
+                                      backgroundColor: '#E8803A',
+                                    }} />
+                                  )}
+                                  <item.icon style={{
+                                    width: 12,
+                                    height: 12,
+                                    flexShrink: 0,
+                                    color: isActive ? '#E8803A' : 'var(--text-muted)',
+                                    transition: 'color 120ms',
+                                    strokeWidth: 2,
+                                  }} />
+                                  <span>{item.title}</span>
+                                </NavLink>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          );
+                        })}
+                      </SidebarMenu>
+                    </div>
+                  ) : (
+                    /* Standard nav items (non-Mix groups) */
+                    <SidebarMenu>
+                      {group.items.map((item) => {
+                        const isActive = item.url === '/dashboard'
+                          ? location.pathname === '/dashboard'
+                          : location.pathname === item.url
+                            || location.pathname.startsWith(`${item.url}/`);
+
+                        return (
+                          <SidebarMenuItem key={item.title}>
+                            <SidebarMenuButton asChild>
+                              <NavLink
+                                to={item.url}
+                                end={item.url === '/dashboard'}
+                                activeClassName=""
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 9,
+                                  padding: '7px 10px',
+                                  borderRadius: 8,
+                                  fontSize: 13,
+                                  fontFamily: 'Plus Jakarta Sans',
+                                  fontWeight: isActive ? 600 : 400,
+                                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                  backgroundColor: isActive ? 'rgba(232,128,58,0.09)' : 'transparent',
+                                  textDecoration: 'none',
+                                  transition: 'background-color 120ms, color 120ms',
+                                  position: 'relative',
+                                  marginBottom: 1,
+                                  outline: 'none',
+                                }}
+                              >
+                                {/* Active left accent tick */}
+                                {isActive && (
+                                  <span style={{
+                                    position: 'absolute',
+                                    left: 0,
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    width: 2,
+                                    height: 16,
+                                    borderRadius: 2,
+                                    backgroundColor: '#E8803A',
+                                  }} />
+                                )}
+                                <item.icon style={{
+                                  width: 14,
+                                  height: 14,
+                                  flexShrink: 0,
+                                  color: isActive ? '#E8803A' : 'var(--text-muted)',
+                                  transition: 'color 120ms',
+                                  strokeWidth: 1.75,
+                                }} />
+                                {!collapsed && <span>{item.title}</span>}
+                              </NavLink>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  )}
+                </SidebarGroupContent>
+              </SidebarGroup>
+            );
+          })}
+        </div>
       </SidebarContent>
 
-      {/* Footer */}
+      {/* ── Footer: user account ─────────────────────────────────────────── */}
       <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, padding: '16px 20px',
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: '12px 14px',
         borderTop: '1px solid var(--border-subtle)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
         backgroundColor: 'var(--bg-root)',
+        gap: 8,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--border-strong)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>MW</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+          {/* Avatar */}
+          <div style={{
+            width: 28,
+            height: 28,
+            borderRadius: '50%',
+            background: 'linear-gradient(135deg, #2C2A26, #3A3835)',
+            border: '1px solid var(--border-strong)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <span style={{
+              fontFamily: 'Outfit',
+              fontSize: 10,
+              fontWeight: 700,
+              color: '#E8803A',
+              letterSpacing: '-0.02em',
+            }}>
+              MW
+            </span>
           </div>
-          <div>
-            <p style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>Admin User</p>
-            <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>admin@mosaic.io</p>
-          </div>
+
+          {/* Name + email */}
+          {!collapsed && (
+            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+              <p style={{
+                fontFamily: 'Outfit',
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                lineHeight: 1.1,
+                margin: 0,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
+                Admin User
+              </p>
+              <p style={{
+                fontFamily: 'Plus Jakarta Sans',
+                fontSize: 10,
+                color: 'var(--text-muted)',
+                lineHeight: 1.1,
+                margin: '2px 0 0',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
+                admin@mosaic.io
+              </p>
+            </div>
+          )}
         </div>
-        <ThemeToggle />
+
+        {/* Theme toggle */}
+        <div style={{ flexShrink: 0 }}>
+          <ThemeToggle />
+        </div>
       </div>
     </Sidebar>
   );
