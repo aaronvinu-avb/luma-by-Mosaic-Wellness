@@ -1,326 +1,232 @@
-import { useMemo, useState } from 'react';
+/**
+ * WhyItWorks — Page 4 of Mix Optimiser
+ *
+ * DATA CONTRACT — reads from model:
+ *   explanation, totalHistoricalMonths, dataRange, dataSource
+ */
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { OptimizerSubnav } from '@/components/optimizer/OptimizerSubnav';
-import { useOptimizer } from '@/contexts/OptimizerContext';
-import {
-  getChannelSummaries,
-  getChannelSaturationModels,
-  getSeasonalityMetrics,
-  getDayOfWeekMetrics,
-  getChannelCapsFromData,
-  buildMonthRange,
-  getTimeFrameMonths,
-} from '@/lib/calculations';
-import { formatINRCompact } from '@/lib/formatCurrency';
+import { useOptimizerModel } from '@/hooks/useOptimizerModel';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import { ChannelName } from '@/components/ChannelName';
+import { ArrowRight } from 'lucide-react';
 import {
-  BarChart3, TrendingDown, Calendar, Zap,
-  ArrowRight, Sun,
-} from 'lucide-react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-
-// ── Design tokens ────────────────────────────────────────────────────────────
 
 const T = {
   overline: { fontFamily: 'Outfit' as const, fontSize: 10, fontWeight: 600 as const, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.08em', margin: 0 },
-  value:    { fontFamily: 'Outfit' as const, fontWeight: 700 as const, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 },
   helper:   { fontFamily: 'Plus Jakarta Sans' as const, fontSize: 13, fontWeight: 400 as const, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 },
 };
 const CARD = { padding: '20px 24px', border: '1px solid var(--border-subtle)', borderRadius: 14, backgroundColor: 'var(--bg-card)' };
-
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const DOW_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-
-const tooltipStyle = {
-  contentStyle: { backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 14px', fontFamily: 'Plus Jakarta Sans', fontSize: 12 },
-  itemStyle: { color: 'var(--text-primary)' },
-  labelStyle: { color: 'var(--text-secondary)' },
-};
-
-// ── Page ─────────────────────────────────────────────────────────────────────
+const DOW_SHORT   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 export default function WhyItWorks() {
-  const { data, aggregate, globalAggregate, isLoading, dataSource, dataUpdatedAt } = useMarketingData({ includeGlobalAggregate: true });
-  const { planningPeriod, customStartMonth, customEndMonth } = useOptimizer();
+  const { isLoading, explanation, totalHistoricalMonths, dataRange, dataSource } = useOptimizerModel();
+
   const [selectedChannel, setSelectedChannel] = useState(CHANNELS[0]);
-
-  const summaries = useMemo(
-    () => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [],
-    [data, aggregate]
-  );
-  const models = useMemo(
-    () => (globalAggregate || data) ? getChannelSaturationModels(globalAggregate || data!) : [],
-    [data, globalAggregate]
-  );
-  const seasonality = useMemo(
-    () => (globalAggregate || data) ? getSeasonalityMetrics(globalAggregate || data!) : [],
-    [data, globalAggregate]
-  );
-  const dowMetrics = useMemo(
-    () => (aggregate || data) ? getDayOfWeekMetrics(aggregate || data!) : [],
-    [data, aggregate]
-  );
-  const caps = useMemo(
-    () => getChannelCapsFromData(globalAggregate || data || []),
-    [globalAggregate, data]
-  );
-  const totalMonths = useMemo(
-    () => getTimeFrameMonths(aggregate || data || []),
-    [aggregate, data]
-  );
-
-  const dataRange = useMemo(() => {
-    if (!data?.length) return null;
-    let min = data[0].date, max = data[0].date;
-    for (const r of data) { if (r.date < min) min = r.date; if (r.date > max) max = r.date; }
-    return { min, max };
-  }, [data]);
-
-  // ── Diminishing returns curve for selected channel ────────────────────
-  const selectedCap     = caps.find((c) => c.channel === selectedChannel);
-  const selectedSummary = summaries.find((s) => s.channel === selectedChannel);
-  const curveData = useMemo(() => {
-    if (!selectedCap) return [];
-    return [
-      { spend: selectedCap.bucketSpend.low,    roas: selectedCap.bucketROAS.low,    bucket: 'Low Spend' },
-      { spend: selectedCap.bucketSpend.medium,  roas: selectedCap.bucketROAS.medium, bucket: 'Mid Spend' },
-      { spend: selectedCap.bucketSpend.high,   roas: selectedCap.bucketROAS.high,   bucket: 'High Spend' },
-    ].filter((p) => p.spend > 0 && p.roas > 0);
-  }, [selectedCap]);
 
   if (isLoading) return <DashboardSkeleton />;
 
+  const expl        = explanation[selectedChannel];
+  const chColor     = CHANNEL_COLORS[CHANNELS.indexOf(selectedChannel) % CHANNEL_COLORS.length];
+  const hasCurve    = (expl?.saturationCurve?.length || 0) > 1;
+
   return (
     <div style={{ maxWidth: 1200, display: 'flex', flexDirection: 'column', gap: 24 }}>
-
-      {/* ── Progress nav ───────────────────────────────────────────────── */}
       <OptimizerSubnav />
 
-      {/* ── Page header ────────────────────────────────────────────────── */}
+      {/* ── Page header ───────────────────────────────────────────────── */}
       <div>
         <h1 style={{ fontFamily: 'Outfit', fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
           Why It Works
         </h1>
         <p style={{ ...T.helper, marginTop: 6 }}>
-          How the optimizer decides what to recommend — the model logic, the data it uses, and the signals it weighs.
+          The methodology behind the recommendation — diminishing returns, seasonality, and day-of-week effects, channel by channel.
+        </p>
+        <p style={{ ...T.helper, fontSize: 11, marginTop: 4, color: 'var(--text-muted)' }}>
+          Fitted from {Math.round(totalHistoricalMonths)} months of data
+          {dataRange ? ` (${dataRange.min} → ${dataRange.max})` : ''} · Source: {dataSource}
         </p>
       </div>
 
-      {/* ── Optimization logic — 4 steps ──────────────────────────────── */}
-      <div style={{ ...CARD }}>
-        <p style={{ ...T.overline, fontSize: 11, marginBottom: 20 }}>How the optimizer works</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-          {[
-            {
-              step: '01', icon: BarChart3, color: '#60A5FA',
-              title: 'Analyse historical efficiency',
-              desc: 'Calculate ROAS for each channel across 3 years of daily data. Establish a baseline return rate per rupee of spend for each channel.',
-            },
-            {
-              step: '02', icon: TrendingDown, color: '#F87171',
-              title: 'Detect saturation and diminishing returns',
-              desc: 'Group spend into low, medium, and high tiers. Identify where higher spend produces lower returns — those channels have a spend cap.',
-            },
-            {
-              step: '03', icon: Calendar, color: '#FBBF24',
-              title: 'Weight for timing',
-              desc: 'Apply channel-specific seasonality and day-of-week multipliers. Channels that peak in a particular month get higher budget weight during that period.',
-            },
-            {
-              step: '04', icon: Zap, color: '#34D399',
-              title: 'Reallocate toward highest marginal return',
-              desc: 'Solve for the allocation that maximises total expected revenue under the budget constraint, with saturation caps bounding each channel share.',
-            },
-          ].map((item) => (
-            <div key={item.step} style={{ backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '18px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: `${item.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <item.icon style={{ width: 16, height: 16, color: item.color }} />
-                </div>
-                <span style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: item.color }}>{item.step}</span>
-              </div>
-              <h3 style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>{item.title}</h3>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>{item.desc}</p>
-            </div>
+      {/* ── Optimization logic explainer ─────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        {[
+          { step: '01', title: 'Fit diminishing returns', body: 'For each channel, we fit a concave log-model: revenue = α · ln(spend + 1). The coefficient α captures how efficiently a channel converts spend into revenue, normalised for seasonality.' },
+          { step: '02', title: 'Apply timing effects',   body: 'Seasonality indices and day-of-week multipliers are derived from historical patterns. Each month\'s forecast includes a time-weight sum Σ(seasonality × day-of-week blend) for the planning period.' },
+          { step: '03', title: 'Solve for optimal mix',  body: 'We solve the constrained optimisation problem: maximise Σ αᵢ · ln(xᵢ + 1) · Wᵢ subject to total spend = budget. Channels are bounded to avoid extreme concentrations.' },
+          { step: '04', title: 'Compare vs current',     body: 'The recommended allocation is run through the same forecast engine as your current allocation. Uplift is the difference — not a model assumption, but a direct forecast comparison.' },
+        ].map(s => (
+          <div key={s.step} style={{ ...CARD }}>
+            <p style={{ fontFamily: 'Outfit', fontSize: 28, fontWeight: 900, color: 'var(--border-strong)', letterSpacing: '-0.04em', margin: '0 0 10px' }}>{s.step}</p>
+            <p style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>{s.title}</p>
+            <p style={{ ...T.helper, fontSize: 12, lineHeight: 1.6 }}>{s.body}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Channel selector ──────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <p style={{ ...T.overline }}>Channel deep-dive:</p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {CHANNELS.map((ch, i) => (
+            <button key={ch} onClick={() => setSelectedChannel(ch)} style={{
+              fontFamily: 'Outfit', fontSize: 11, fontWeight: 600, padding: '7px 12px', borderRadius: 8, cursor: 'pointer', transition: '100ms',
+              border: selectedChannel === ch ? `1px solid ${CHANNEL_COLORS[i]}` : '1px solid var(--border-subtle)',
+              backgroundColor: selectedChannel === ch ? `${CHANNEL_COLORS[i]}22` : 'transparent',
+              color: selectedChannel === ch ? CHANNEL_COLORS[i] : 'var(--text-muted)',
+            }}>{ch}</button>
           ))}
         </div>
       </div>
 
-      {/* ── Diminishing returns ───────────────────────────────────────── */}
-      <div style={{ ...CARD }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <p style={{ ...T.overline, fontSize: 11, marginBottom: 4 }}>Diminishing Returns by Channel</p>
-            <p style={{ ...T.helper, fontSize: 12 }}>
-              Each channel's ROAS at low, medium, and high spend levels — the curve that drives the saturation cap.
+      {expl && (
+        <>
+          {/* Channel summary cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            {[
+              { label: 'Historical ROAS',      value: `${expl.historicalROAS.toFixed(2)}x`,   note: 'Total revenue ÷ total spend over the full historical dataset.' },
+              { label: 'Portfolio ROAS',        value: `${expl.portfolioROAS.toFixed(2)}x`,    note: 'Blended across all channels.' },
+              { label: 'Marginal ROAS @ current spend', value: `${expl.marginalROASAtCurrent.toFixed(2)}x`, note: 'dRevenue / dSpend at the current allocation level.' },
+              { label: 'Marginal ROAS @ recommended',  value: `${expl.marginalROASAtRecommended.toFixed(2)}x`, note: 'dRevenue / dSpend at the recommended spend level.' },
+              { label: 'Peak seasonality month', value: MONTH_NAMES[expl.peakMonth], note: `+${Math.round(expl.peakBoost * 100)}% above the annual average in this month.` },
+              { label: 'Best day of week',       value: DOW_SHORT[expl.bestDay],  note: 'Highest historically observed ROAS by day of week.' },
+            ].map(k => (
+              <div key={k.label} style={{ ...CARD }}>
+                <p style={T.overline}>{k.label}</p>
+                <p style={{ fontFamily: 'Outfit', fontWeight: 800, fontSize: 20, color: chColor, letterSpacing: '-0.02em', margin: '6px 0 0' }}>{k.value}</p>
+                <p style={{ ...T.helper, fontSize: 11, marginTop: 6, lineHeight: 1.4 }}>{k.note}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Diminishing returns curve */}
+          <div style={{ ...CARD }}>
+            <p style={{ ...T.overline, marginBottom: 4 }}>Diminishing returns — {selectedChannel}</p>
+            <p style={{ ...T.helper, fontSize: 12, marginBottom: 20 }}>
+              Each data point is a historical monthly observation. As spend rises, ROAS falls — the channel saturates.
+              {Number.isFinite(expl.capSpend) && ` Modelled saturation cap around ${Math.round(expl.capSpend / 1000)}K/mo.`}
+            </p>
+            {hasCurve ? (
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={expl.saturationCurve} margin={{ top: 0, right: 24, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
+                  <XAxis dataKey="spend" tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} tick={{ fontFamily: 'Outfit', fontSize: 10, fill: 'var(--text-muted)' }} />
+                  <YAxis tickFormatter={v => `${v.toFixed(1)}x`} tick={{ fontFamily: 'Outfit', fontSize: 10, fill: 'var(--text-muted)' }} />
+                  <Tooltip
+                    formatter={(v: number) => [`${v.toFixed(2)}x ROAS`]}
+                    labelFormatter={v => `Spend: ₹${(Number(v) / 1000).toFixed(0)}K/mo`}
+                    contentStyle={{ fontFamily: 'Outfit', fontSize: 12, backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}
+                  />
+                  <Line type="monotone" dataKey="roas" stroke={chColor} strokeWidth={2} dot={{ r: 3, fill: chColor }} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <p style={{ ...T.helper, fontSize: 12 }}>Insufficient historical data points to render a curve for this channel.</p>
+            )}
+          </div>
+
+          {/* Seasonality index */}
+          <div style={{ ...CARD }}>
+            <p style={{ ...T.overline, marginBottom: 16 }}>Monthly seasonality — {selectedChannel}</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 6 }}>
+              {(expl.seasonalityIndex || []).map((idx, m) => {
+                const isPeak  = m === expl.peakMonth;
+                const bar     = Math.max(10, Math.min(100, idx * 60));
+                return (
+                  <div key={m} style={{ textAlign: 'center' }}>
+                    <div style={{ height: 60, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                      <div style={{ width: '100%', backgroundColor: isPeak ? chColor : `${chColor}55`, borderRadius: 4, height: `${bar}%` }} />
+                    </div>
+                    <p style={{ fontFamily: 'Outfit', fontSize: 9, fontWeight: isPeak ? 700 : 400, color: isPeak ? chColor : 'var(--text-muted)', marginTop: 4, margin: '4px 0 0' }}>{MONTH_NAMES[m]}</p>
+                    <p style={{ fontFamily: 'Outfit', fontSize: 9, color: 'var(--text-muted)', margin: '2px 0 0' }}>{idx.toFixed(2)}</p>
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ ...T.helper, fontSize: 11, marginTop: 16, lineHeight: 1.5 }}>
+              Index 1.0 = channel average. {expl.peakBoost > 0.15
+                ? `${MONTH_NAMES[expl.peakMonth]} outperforms the annual average by ~${Math.round(expl.peakBoost * 100)}% — consider front-loading budget in this month.`
+                : `Seasonality is near-flat for this channel — timing matters less than allocation share.`}
             </p>
           </div>
-          <select
-            value={selectedChannel}
-            onChange={(e) => setSelectedChannel(e.target.value)}
-            style={{ backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 10, color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans', fontSize: 13, padding: '10px 14px', minWidth: 180 }}
-          >
-            {CHANNELS.map((ch) => <option key={ch} value={ch}>{ch}</option>)}
-          </select>
-        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10, marginBottom: 20 }}>
-          {[
-            { label: 'Historical ROAS',  value: selectedSummary ? `${selectedSummary.roas.toFixed(2)}x` : '—' },
-            { label: 'Saturation Cap',   value: selectedCap && Number.isFinite(selectedCap.capSpend) ? formatINRCompact(selectedCap.capSpend) + '/mo' : 'None detected' },
-            { label: 'Low-spend ROAS',   value: selectedCap ? `${selectedCap.bucketROAS.low.toFixed(2)}x` : '—' },
-            { label: 'High-spend ROAS',  value: selectedCap ? `${selectedCap.bucketROAS.high.toFixed(2)}x` : '—' },
-          ].map((kpi) => (
-            <div key={kpi.label} style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-subtle)' }}>
-              <p style={{ ...T.overline, fontSize: 9 }}>{kpi.label}</p>
-              <p style={{ fontFamily: 'Outfit', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginTop: 4 }}>{kpi.value}</p>
-            </div>
-          ))}
-        </div>
-
-        {curveData.length >= 2 ? (
-          <>
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={curveData}>
-                <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
-                <XAxis dataKey="spend" tickFormatter={(v) => formatINRCompact(v)} tick={{ fontSize: 10, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} label={{ value: 'Monthly Spend →', position: 'insideBottom', offset: -4, style: { fill: 'var(--text-muted)', fontSize: 11 } }} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} label={{ value: 'ROAS', angle: -90, position: 'insideLeft', style: { fill: 'var(--text-muted)', fontSize: 11 } }} />
-                <Tooltip {...tooltipStyle} formatter={(v: number) => [`${Number(v).toFixed(2)}x`, 'ROAS']} labelFormatter={(v) => `Spend: ${formatINRCompact(Number(v))}`} />
-                {selectedCap?.blendedROAS ? <ReferenceLine y={selectedCap.blendedROAS} stroke="#F87171" strokeDasharray="4 4" label={{ value: 'Blended avg', position: 'insideRight', style: { fill: '#F87171', fontSize: 10 } }} /> : null}
-                <Line type="monotone" dataKey="roas" stroke={CHANNEL_COLORS[CHANNELS.indexOf(selectedChannel)]} strokeWidth={2.5} dot={{ r: 5 }} name="ROAS by spend tier" />
-              </LineChart>
-            </ResponsiveContainer>
-            <p style={{ ...T.helper, fontSize: 11, marginTop: 10 }}>
-              Points show ROAS at low, mid, and high historical spend. When the high-spend point falls below the red dashed line (blended average), the channel is capped.
+          {/* Day-of-week effects */}
+          <div style={{ ...CARD }}>
+            <p style={{ ...T.overline, marginBottom: 4 }}>Day-of-week performance — {selectedChannel}</p>
+            <p style={{ ...T.helper, fontSize: 12, marginBottom: 16 }}>
+              Index 1.0 = 7-day average. {expl.weekendBias !== 'neutral'
+                ? `This channel is strongest on ${expl.weekendBias === 'weekend' ? 'weekends' : 'weekdays'} — bid strategies can leverage this.`
+                : 'Performance is consistent across the week.'}
             </p>
-          </>
-        ) : (
-          <p style={{ ...T.helper, fontSize: 12, fontStyle: 'italic' }}>Insufficient spend-tier data for {selectedChannel}.</p>
-        )}
-      </div>
-
-      {/* ── Day-of-week effects ───────────────────────────────────────── */}
-      <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 14, overflow: 'hidden', backgroundColor: 'var(--bg-card)' }}>
-        <div style={{ padding: '20px 24px 0' }}>
-          <p style={{ ...T.overline, fontSize: 11 }}>Day-of-Week Performance</p>
-          <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>Best performing days per channel based on historical ROAS by weekday.</p>
-          <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 16 }} />
-        </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              {['Channel', 'Best Day', 'Runner-Up', 'Weekend Bias'].map((h) => (
-                <th key={h} style={{ padding: '11px 24px', textAlign: h === 'Channel' ? 'left' : 'center', ...T.overline, fontSize: 9 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {dowMetrics.map((row, i) => (
-              <tr key={row.channel} style={{ borderTop: '1px solid var(--border-subtle)' }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--border-subtle)')}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-                <td style={{ padding: '12px 24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: CHANNEL_COLORS[i], flexShrink: 0 }} />
-                    <ChannelName channel={row.channel} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }} />
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+              {(expl.dowIndex || []).map((idx, d) => {
+                const isBest = d === expl.bestDay;
+                const bar    = Math.max(10, Math.min(100, idx * 60));
+                return (
+                  <div key={d} style={{ flex: 1, textAlign: 'center' }}>
+                    <div style={{ height: 80, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                      <div style={{ backgroundColor: isBest ? chColor : `${chColor}44`, borderRadius: 4, height: `${bar}%` }} />
+                    </div>
+                    <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: isBest ? 700 : 400, color: isBest ? chColor : 'var(--text-muted)', marginTop: 4, margin: '4px 0 0' }}>{DOW_SHORT[d]}</p>
+                    <p style={{ fontFamily: 'Outfit', fontSize: 9, color: 'var(--text-muted)', margin: '2px 0 0' }}>{idx.toFixed(2)}</p>
                   </div>
-                </td>
-                <td style={{ padding: '12px 24px', textAlign: 'center', fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: '#34D399' }}>{DOW_NAMES[row.bestDay]}</td>
-                <td style={{ padding: '12px 24px', textAlign: 'center', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>{DOW_NAMES[row.days.indexOf(Math.max(...row.days.filter((_, di) => di !== row.bestDay)))]}</td>
-                <td style={{ padding: '12px 24px', textAlign: 'center', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{row.weekendBias || 'neutral'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                );
+              })}
+            </div>
+          </div>
 
-      {/* ── Seasonality ───────────────────────────────────────────────── */}
-      <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 14, overflow: 'hidden', backgroundColor: 'var(--bg-card)' }}>
-        <div style={{ padding: '20px 24px 0' }}>
-          <p style={{ ...T.overline, fontSize: 11 }}>Seasonal Peaks by Channel</p>
-          <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>Which months each channel historically outperforms — budget is weighted toward peak periods.</p>
-          <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 16 }} />
-        </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              {['Channel', 'Peak Month', 'Implication'].map((h) => (
-                <th key={h} style={{ padding: '11px 24px', textAlign: h === 'Implication' || h === 'Channel' ? 'left' : 'center', ...T.overline, fontSize: 9 }}>{h}</th>
+          {/* Reason codes */}
+          <div style={{ ...CARD }}>
+            <p style={{ ...T.overline, marginBottom: 12 }}>Model signal summary — {selectedChannel}</p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {(expl.reasonCodes || []).map(code => (
+                <span key={code} style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', padding: '5px 12px', borderRadius: 6 }}>
+                  {code}
+                </span>
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {seasonality.map((row, i) => (
-              <tr key={row.channel} style={{ borderTop: '1px solid var(--border-subtle)' }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--border-subtle)')}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-                <td style={{ padding: '12px 24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: CHANNEL_COLORS[i], flexShrink: 0 }} />
-                    <ChannelName channel={row.channel} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }} />
-                  </div>
-                </td>
-                <td style={{ padding: '12px 24px', textAlign: 'center', fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: '#34D399' }}>{MONTH_NAMES[row.peakMonth]}</td>
-                <td style={{ padding: '12px 24px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                  {row.peakBoost > 0.15
-                    ? `${MONTH_NAMES[row.peakMonth]} outperforms average by ~${Math.round(row.peakBoost * 100)}% — consider extra weight here.`
-                    : `Seasonality is near average — timing matters less for this channel.`}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── Data & methodology note ────────────────────────────────────── */}
-      <div style={{ ...CARD, borderColor: 'rgba(251,191,36,0.2)', backgroundColor: 'rgba(251,191,36,0.04)' }}>
-        <p style={{ ...T.overline, fontSize: 10, color: '#FBBF24', marginBottom: 10 }}>Data and methodology notes</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+      <div style={{ ...CARD }}>
+        <p style={{ ...T.overline, marginBottom: 10 }}>Methodology notes</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[
-            { label: 'Data range',     value: dataRange ? `${dataRange.min} → ${dataRange.max}` : '—' },
-            { label: 'Data points',    value: `${totalMonths} months × 10 channels` },
-            { label: 'Source',         value: dataSource === 'api' ? 'Live API' : dataSource === 'cached' ? 'Cached' : 'Sample data' },
-            { label: 'Last loaded',    value: dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
-            { label: 'Model type',     value: 'Concave spend–response: α·ln(spend+1)' },
-            { label: 'Forecast basis', value: 'Model output × seasonality × day-of-week weights' },
-          ].map((item) => (
-            <div key={item.label}>
-              <p style={{ ...T.overline, fontSize: 9, marginBottom: 4 }}>{item.label}</p>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>{item.value}</p>
+            'Diminishing returns are modelled using a weighted log-regression: revenue = α·ln(spend+1). Alpha is fitted on monthly observations, weighted by √spend to reduce noise from low-spend months.',
+            'Seasonality indices are ROAS ratios per calendar month vs the channel\'s annual average, computed over the full history regardless of the current date filter.',
+            'Day-of-week multipliers are ROAS ratios per weekday vs the channel\'s 7-day average, aggregated from all historical daily records.',
+            'Optimal allocation solves the KKT conditions: αᵢ·Wᵢ / (xᵢ+1) = λ for all active channels, where Wᵢ is the period time-weight sum. Channels are bounded to prevent extreme concentrations.',
+            'Both current and recommended forecasts use the exact same engine — only the allocation shares differ. Uplift is the direct arithmetic difference between the two independently computed revenue totals.',
+          ].map((note, i) => (
+            <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <span style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0, marginTop: 2 }}>{String(i + 1).padStart(2, '0')}.</span>
+              <p style={{ ...T.helper, fontSize: 12, lineHeight: 1.6 }}>{note}</p>
             </div>
           ))}
         </div>
-        <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', marginTop: 16, lineHeight: 1.6, margin: '16px 0 0' }}>
-          All revenue figures are model forecasts, not guaranteed outcomes. The optimizer recommends the allocation expected to maximise revenue given current efficiency signals and budget constraints.
-        </p>
       </div>
 
-      {/* ── CTA to Budget Scenarios ───────────────────────────────────── */}
+      {/* ── CTA → Budget Scenarios ─────────────────────────────────────── */}
       <div style={{ ...CARD, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' }}>
         <div>
           <p style={{ fontFamily: 'Outfit', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-            Ready to explore what happens if the budget changes?
+            How does the model respond to budget changes?
           </p>
           <p style={{ ...T.helper, fontSize: 12, marginTop: 6 }}>
-            Budget Scenarios shows revenue and ROAS projections across conservative, current, and aggressive spend levels.
+            Budget Scenarios runs the same engine at different spend levels so you can see diminishing returns at the portfolio level.
           </p>
         </div>
-        <Link to="/optimizer/scenarios" style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '12px 20px', borderRadius: 10,
-          background: 'linear-gradient(135deg, #E8803A, #FBBF24)',
-          color: '#000', fontFamily: 'Outfit', fontSize: 13, fontWeight: 700,
-          textDecoration: 'none', whiteSpace: 'nowrap',
-        }}>
+        <Link to="/optimizer/scenarios" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 10, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: '#000', fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>
           See Budget Scenarios <ArrowRight size={15} />
         </Link>
       </div>
-
     </div>
   );
 }
