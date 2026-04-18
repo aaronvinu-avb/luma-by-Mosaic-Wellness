@@ -193,6 +193,8 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
     data: filteredData,
     aggregate,
     globalAggregate,
-    dataSource: query.data ? query.data.source : 'loading'
+    dataSource: query.data ? query.data.source : 'loading',
+    /** ms epoch — when the query last successfully resolved (API, cache, or mock) */
+    dataUpdatedAt: query.dataUpdatedAt,
   };
 }

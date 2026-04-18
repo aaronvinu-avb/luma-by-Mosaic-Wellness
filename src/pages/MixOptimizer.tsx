@@ -37,7 +37,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 
-import { formatINRCompact } from '@/lib/formatCurrency';
+import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
@@ -67,7 +67,7 @@ const tooltipStyle = {
 };
 
 export default function MixOptimizer() {
-  const { data, aggregate, globalAggregate, isLoading } = useMarketingData({ includeGlobalAggregate: true });
+  const { data, aggregate, globalAggregate, isLoading, dataSource, dataUpdatedAt } = useMarketingData({ includeGlobalAggregate: true });
   const timelineStartYear = 2023;
   const timelineEndYear = 2027;
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -98,7 +98,19 @@ export default function MixOptimizer() {
   const [showComparisonChart, setShowComparisonChart] = useState(false);
   const [showBudgetScenarios, setShowBudgetScenarios] = useState(false);
   const [showAllRationale, setShowAllRationale] = useState(false);
+  const [metricDefinitionsOpen, setMetricDefinitionsOpen] = useState(false);
   const safeBudget = Number.isFinite(budget) ? Math.max(0, budget) : 0;
+
+  const dataDateRange = useMemo(() => {
+    if (!data?.length) return null;
+    let min = data[0].date;
+    let max = data[0].date;
+    for (const r of data) {
+      if (r.date < min) min = r.date;
+      if (r.date > max) max = r.date;
+    }
+    return { min, max };
+  }, [data]);
 
   // ── Data derivations ──────────────────────────────────────────────────────
   const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
@@ -123,11 +135,11 @@ export default function MixOptimizer() {
   }, [summaries, timeFrameMonths]);
 
   useEffect(() => {
-    if (avgMonthlySpend !== 5000000 && !hasSetInitialBudget) {
-      setBudget(avgMonthlySpend);
-      setHasSetInitialBudget(true);
-    }
-  }, [avgMonthlySpend, hasSetInitialBudget]);
+    if (hasSetInitialBudget || summaries.length === 0) return;
+    const rounded = Math.round(avgMonthlySpend / 1000) * 1000;
+    setBudget(Math.max(0, rounded));
+    setHasSetInitialBudget(true);
+  }, [avgMonthlySpend, hasSetInitialBudget, summaries.length]);
 
   const currentFractions = useMemo(() => {
     const totalSpend = summaries.reduce((sum, channel) => sum + channel.totalSpend, 0);
@@ -242,6 +254,34 @@ export default function MixOptimizer() {
     });
   }, [globalAggregate, data, selectedRange, modeMultiplier, durationMonthCount, models]);
 
+  const scenarioIncrementalNote = useMemo(() => {
+    const b0 = BUDGET_SCENARIOS[0]?.value;
+    const b1 = BUDGET_SCENARIOS[1]?.value;
+    const b2 = BUDGET_SCENARIOS[2]?.value;
+    const s0 = scenarioResults[0];
+    const s1 = scenarioResults[1];
+    const s2 = scenarioResults[2];
+    if (
+      b0 === undefined || b1 === undefined || b2 === undefined ||
+      !s0 || !s1 || !s2 || durationMonthCount < 1
+    ) return null;
+    const periodBudgetDelta = (hi: number, lo: number) => (hi - lo) * durationMonthCount;
+    const dLow = periodBudgetDelta(b1, b0);
+    const dHigh = periodBudgetDelta(b2, b1);
+    const mLow = dLow > 0 ? (s1.revenue - s0.revenue) / dLow : 0;
+    const mHigh = dHigh > 0 ? (s2.revenue - s1.revenue) / dHigh : 0;
+    return {
+      mLow,
+      mHigh,
+      deltaRevUpper: s2.revenue - s1.revenue,
+      extraBudgetUpper: dHigh,
+      labels: {
+        low: `${formatINRCompact(b0)}/mo → ${formatINRCompact(b1)}/mo`,
+        high: `${formatINRCompact(b1)}/mo → ${formatINRCompact(b2)}/mo`,
+      },
+    };
+  }, [scenarioResults, durationMonthCount]);
+
   // ── KPI DERIVATIONS (single chain: Opportunity = Optimized − Current; Uplift % = Opportunity / Current)
   const currentAllocationRevenue = projectedPlan.totalRevenue;
   const optimizedRevenue = recommendedPlan.totalRevenue;
@@ -268,7 +308,7 @@ export default function MixOptimizer() {
   }, [planningPeriod]);
   const totalPct = useMemo(() => CHANNELS.reduce((s, ch) => s + (alloc[ch] || 0), 0), [alloc]);
 
-  // ── Per-channel reasoning (data-driven, for "Why this allocation" panel) ──
+  // ── Per-channel reasoning (data-driven, for “AI vs historical spend” panel) ──
   const channelReasons = useMemo(() => {
     if (summaries.length === 0 || models.length === 0) return {};
     const refROAS = portfolioWeightedROAS > 0
@@ -410,10 +450,11 @@ export default function MixOptimizer() {
   const comparisonData = useMemo(() =>
     CHANNELS.map(ch => ({
       channel: ch.replace(' ', '\n'),
+      historical: parseFloat((((currentFractions[ch] || 0) * 100)).toFixed(1)),
       current: parseFloat((((projectedPlan.channelShares[ch] || 0) * 100)).toFixed(1)),
       optimal: parseFloat(((optimalFractions[ch] || 0) * 100).toFixed(1)),
     })),
-  [projectedPlan.channelShares, optimalFractions]);
+  [currentFractions, projectedPlan.channelShares, optimalFractions]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleSlider = useCallback((ch: string, val: number[]) => {
@@ -533,7 +574,13 @@ export default function MixOptimizer() {
             Marketing Mix Optimizer
           </h1>
           <p style={{ ...T.helper, marginTop: 4 }}>
-            ₹50L/mo portfolio · 10 channels · 3 years of daily data · diminishing returns, seasonality & day-of-week signals
+            ₹50L/mo portfolio · 10 channels · modelled forecasts (not raw daily realized totals)
+          </p>
+          <p style={{ ...T.helper, fontSize: 11, marginTop: 6, color: 'var(--text-muted)' }}>
+            Data: {dataDateRange ? `${dataDateRange.min} → ${dataDateRange.max}` : '—'}
+            {' · '}
+            Source: {dataSource === 'api' ? 'API' : dataSource === 'cached' ? 'Cache' : dataSource === 'mock' ? 'Sample' : '—'}
+            {dataUpdatedAt ? ` · Loaded ${new Date(dataUpdatedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` : ''}
           </p>
         </div>
         <button 
@@ -584,15 +631,17 @@ export default function MixOptimizer() {
                 type="number"
                 value={safeBudget}
                 min={0}
+                step={1000}
                 onChange={(e) => {
                   const parsed = Number(e.target.value);
                   setBudget(Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
                 }}
+                onBlur={() => setBudget((b) => Math.round(Math.max(0, b) / 1000) * 1000)}
                 style={{ flex: 1, minWidth: 110, background: 'transparent', border: 'none', outline: 'none', ...T.value, fontSize: 18 }}
               />
             </div>
             <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
-              {formatINRCompact(safeBudget)}/mo · {formatINRCompact(totalPlannedBudget)} total
+              <span style={{ color: 'var(--text-secondary)' }}>{formatINR(safeBudget)}</span>/mo · {formatINRCompact(totalPlannedBudget)} total for selected period
             </p>
           </div>
 
@@ -672,30 +721,35 @@ export default function MixOptimizer() {
       <div className="mix-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {[
           {
-            label: 'Current Allocation Revenue',
+            label: 'Current allocation revenue',
             value: formatINRCompact(currentAllocationRevenue),
+            foot: 'Forecast for your slider mix — concave model × seasonality × DOW.',
             accent: '#60A5FA',
           },
           {
-            label: 'Optimized Revenue',
+            label: 'Optimized revenue',
             value: formatINRCompact(optimizedRevenue),
+            foot: 'Forecast for AI mix — same model; not realized historical revenue.',
             accent: '#34D399',
           },
           {
-            label: 'Revenue Opportunity',
+            label: 'Revenue opportunity',
             value: `${revenueOpportunity >= 0 ? '+' : ''}${formatINRCompact(revenueOpportunity)}`,
-            sub: `${upliftPct >= 0 ? '+' : ''}${upliftPct.toFixed(2)}% uplift vs current`,
+            sub: `${upliftPct >= 0 ? '+' : ''}${upliftPct.toFixed(2)}% vs your mix`,
+            foot: 'Optimized minus current allocation (both forecasts).',
             accent: revenueOpportunity >= 0 ? '#34D399' : '#F87171',
           },
           {
-            label: 'Blended ROAS (current → optimized)',
+            label: 'Blended ROAS (forecast)',
             value: `${currentAllocationROAS.toFixed(2)}x`,
             sub: `${optimizedROAS.toFixed(2)}x optimized`,
+            foot: 'Period revenue ÷ period budget — modeled, not raw daily ROAS.',
             accent: '#E8803A',
           },
           {
             label: 'Active Channels',
             value: `${activeChannels.length} / 10`,
+            foot: 'Channels not paused in manual allocation.',
             accent: '#A78BFA',
           },
         ].map((kpi, idx) => (
@@ -717,9 +771,41 @@ export default function MixOptimizer() {
             {kpi.sub && (
               <p style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: kpi.accent, margin: '2px 0 0 0' }}>{kpi.sub}</p>
             )}
+            {'foot' in kpi && kpi.foot && (
+              <p style={{ ...T.helper, fontSize: 10, marginTop: 8, lineHeight: 1.45, color: 'var(--text-muted)' }}>{kpi.foot}</p>
+            )}
             <div style={{ height: 2, backgroundColor: kpi.accent, borderRadius: 1, marginTop: kpi.sub ? 8 : 12, opacity: 0.35 }} />
           </div>
         ))}
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <button
+          type="button"
+          onClick={() => setMetricDefinitionsOpen(!metricDefinitionsOpen)}
+          style={{
+            fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600,
+            color: 'var(--text-muted)', background: 'var(--bg-card)', border: CARD_BORDER,
+            borderRadius: 10, padding: '10px 14px', cursor: 'pointer', width: '100%', textAlign: 'left',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          }}
+        >
+          <span><strong style={{ color: 'var(--text-secondary)' }}>Metric definitions</strong> — historical vs forecast vs uplift</span>
+          {metricDefinitionsOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {metricDefinitionsOpen && (
+          <div style={{
+            marginTop: 10, padding: '14px 16px', borderRadius: 10, border: CARD_BORDER,
+            backgroundColor: 'var(--bg-card)', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.65,
+          }}>
+            <p style={{ margin: '0 0 10px 0' }}><strong>Historical mix</strong> — share of spend each channel earned in the loaded dataset (realized).</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>Your mix</strong> — share implied by sliders (paused channels excluded), normalized to 100%.</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>AI recommended</strong> — optimizer output under the monthly budget and planning window.</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>Current vs optimized revenue (KPIs)</strong> — both are <strong>model forecasts</strong> (α·ln(spend+1) with seasonality and day-of-week). When sliders match AI, uplift is ~0 even if AI still differs from <em>historical</em> spend.</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>AI vs historical spend</strong> — explains AI mix vs <strong>historical</strong> budget share only; not the same comparison as the uplift row.</p>
+            <p style={{ margin: 0 }}><strong>Blended ROAS</strong> — forecast revenue ÷ budget for the selected period; not a simple average of daily channel ROAS from the API.</p>
+          </div>
+        )}
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
@@ -796,6 +882,12 @@ export default function MixOptimizer() {
                 ? `Difference within tolerance (Δ ${formatINRCompact(revenueOpportunity)}, ${upliftPct >= 0 ? '+' : ''}${upliftPct.toFixed(2)}%).`
                 : `Blended ROAS ${currentAllocationROAS.toFixed(2)}x vs ${optimizedROAS.toFixed(2)}x · opportunity ${formatINRCompact(revenueOpportunity)}.`}
             </p>
+            {isNearOptimal && (
+              <p style={{ ...T.helper, fontSize: 12, marginTop: 8, lineHeight: 1.45 }}>
+                KPI uplift compares <strong style={{ color: 'var(--text-secondary)' }}>your slider forecast vs AI forecast</strong>.
+                “Why allocation” compares <strong style={{ color: 'var(--text-secondary)' }}>AI vs historical spend mix</strong> — they use different baselines, so uplift can be ~0 while AI still diverges from history.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -814,7 +906,7 @@ export default function MixOptimizer() {
             <div>
               <p style={T.overline}>Channel Allocation</p>
               <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
-                Tap a row for spend, revenue, marginal ROAS, and rationale — sliders are in Manual Allocation below.
+                Columns: historical share from data, your slider mix, AI optimizer — tap a row for detail; sliders live in Manual Allocation below.
               </p>
             </div>
             <button onClick={applyOptimal} style={{
@@ -831,14 +923,14 @@ export default function MixOptimizer() {
         {/* Table header — compact summary columns only */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(120px,1.4fr) 56px 56px 52px minmax(72px,0.9fr) 28px',
+          gridTemplateColumns: 'minmax(120px,1.35fr) 42px 48px 48px 44px minmax(68px,0.85fr) 28px',
           padding: '10px 24px',
           gap: 8,
           backgroundColor: 'var(--bg-root)',
           borderBottom: '1px solid var(--border-subtle)',
           alignItems: 'center',
         }}>
-          {['Channel', 'Yours', 'AI', 'Gap', 'Status', ''].map((h) => (
+          {['Channel', 'Hist', 'Yours', 'AI', 'Gap', 'Status', ''].map((h) => (
             <span key={h} style={{ ...T.overline, fontSize: 10, textAlign: h !== 'Channel' && h !== '' ? 'center' : 'left' }}>{h}</span>
           ))}
         </div>
@@ -882,7 +974,7 @@ export default function MixOptimizer() {
                 onClick={() => toggleRowExpand(ch)}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'minmax(120px,1.4fr) 56px 56px 52px minmax(72px,0.9fr) 28px',
+                  gridTemplateColumns: 'minmax(120px,1.35fr) 42px 48px 48px 44px minmax(68px,0.85fr) 28px',
                   padding: '12px 24px',
                   gap: 8,
                   alignItems: 'center',
@@ -900,6 +992,7 @@ export default function MixOptimizer() {
                   <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
                   <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }} />
                 </div>
+                <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textAlign: 'center' }} title="Historical spend mix">{histPct}%</span>
                 <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'center' }}>{yourPct}%</span>
                 <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center' }}>{optPct}%</span>
                 <span style={{
@@ -1040,9 +1133,9 @@ export default function MixOptimizer() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
               <Lightbulb size={18} style={{ color: '#FBBF24', flexShrink: 0 }} />
               <div>
-                <p style={T.overline}>Why this allocation changed</p>
+                <p style={T.overline}>AI vs historical spend</p>
                 <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
-                  {showWhyAllocation ? 'Hide narrative detail' : 'Open to see how AI differs from historical spend'}
+                  {showWhyAllocation ? 'Hide narrative detail' : 'Why AI mix diverges from historical budget share (not the uplift row)'}
                 </p>
               </div>
             </div>
@@ -1052,7 +1145,7 @@ export default function MixOptimizer() {
           {showWhyAllocation && (
           <div style={{ padding: '0 24px 20px' }}>
           <p style={{ ...T.helper, fontSize: 12, marginBottom: 16 }}>
-            Explains how the AI mix diverges from <strong style={{ color: 'var(--text-secondary)' }}>historical</strong> spend (use Reset on sliders to snap back to that baseline).
+            Independent of KPI uplift: each channel compares <strong style={{ color: 'var(--text-secondary)' }}>AI recommended share</strong> to <strong style={{ color: 'var(--text-secondary)' }}>historical spend mix</strong>. Use Reset on sliders to align “your mix” with historical baseline.
           </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
@@ -1264,8 +1357,9 @@ export default function MixOptimizer() {
                       <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} unit="%" />
                       <Tooltip {...tooltipStyle} formatter={(v: number, name: string) => [`${v.toFixed(1)}%`, name]} />
                       <Legend wrapperStyle={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }} />
-                      <Bar dataKey="current" fill="rgba(96,165,250,0.6)" name="Your allocation" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="optimal" fill="rgba(232,128,58,0.85)" name="AI optimal" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="historical" fill="rgba(148,163,184,0.65)" name="Historical" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="current" fill="rgba(96,165,250,0.6)" name="Your mix" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="optimal" fill="rgba(232,128,58,0.85)" name="AI mix" radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1321,6 +1415,14 @@ export default function MixOptimizer() {
                     })}
                   </tbody>
                 </table>
+              )}
+              {showBudgetScenarios && scenarioIncrementalNote && (
+                <p style={{ ...T.helper, fontSize: 11, lineHeight: 1.5, margin: 0, padding: '12px 16px 18px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-root)' }}>
+                  <strong style={{ color: 'var(--text-secondary)' }}>Marginal ROAS (forecast)</strong> between tiers — extra revenue per extra rupee of period budget:
+                  {' '}{scenarioIncrementalNote.labels.low}: <strong>{scenarioIncrementalNote.mLow.toFixed(2)}x</strong>;
+                  {' '}{scenarioIncrementalNote.labels.high}: <strong>{scenarioIncrementalNote.mHigh.toFixed(2)}x</strong>
+                  {' '}(+{formatINRCompact(scenarioIncrementalNote.deltaRevUpper)} revenue on +{formatINRCompact(scenarioIncrementalNote.extraBudgetUpper)} budget vs mid tier).
+                </p>
               )}
             </div>
           </div>
