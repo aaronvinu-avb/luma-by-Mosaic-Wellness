@@ -35,7 +35,9 @@ import {
 } from './_shared/ui';
 
 // Main table grid — 6 data columns + action
-const COL = 'minmax(160px,1fr) 70px 90px 96px 52px 96px 56px';
+// Widths are tuned so uppercase column headers render on a single line
+// and pill badges ("Over-Weighted", "Under-Invested") fit without squeezing.
+const COL = 'minmax(180px,1.2fr) 86px 104px 116px 64px 130px 72px';
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const DOW_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -320,7 +322,7 @@ export default function CurrentMix() {
 
         {/* Toolbar */}
         <div style={{
-          padding: '11px 20px',
+          padding: '14px 22px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           borderBottom: '1px solid var(--border-subtle)',
           borderRadius: '12px 12px 0 0',
@@ -351,20 +353,24 @@ export default function CurrentMix() {
             {/* Column headers */}
             <div style={{
               display: 'grid', gridTemplateColumns: COL,
-              padding: '7px 20px', gap: 8,
+              padding: '8px 22px', gap: 10,
               backgroundColor: 'var(--bg-root)',
               borderBottom: '1px solid var(--border-subtle)',
             }}>
               {[
-                { h: 'Channel',          align: 'left'   },
-                { h: 'Allocation %',     align: 'right'  },
-                { h: 'Forecast Spend',   align: 'right'  },
-                { h: 'Forecast Revenue', align: 'right'  },
-                { h: 'ROAS',             align: 'center' },
-                { h: 'Health',           align: 'center' },
-                { h: '',                 align: 'center' },
+                { h: 'Channel',    align: 'left'   },
+                { h: 'Allocation', align: 'right'  },
+                { h: 'Spend',      align: 'right'  },
+                { h: 'Revenue',    align: 'right'  },
+                { h: 'ROAS',       align: 'center' },
+                { h: 'Health',     align: 'center' },
+                { h: '',           align: 'center' },
               ].map(({ h, align }, i) => (
-                <span key={i} style={{ ...T.overline, fontSize: 9, textAlign: align as React.CSSProperties['textAlign'] }}>{h}</span>
+                <span key={i} style={{
+                  ...T.overline, fontSize: 9,
+                  textAlign: align as React.CSSProperties['textAlign'],
+                  whiteSpace: 'nowrap',
+                }}>{h}</span>
               ))}
             </div>
 
@@ -402,7 +408,7 @@ export default function CurrentMix() {
                 >
                   <div style={{
                     display: 'grid', gridTemplateColumns: COL,
-                    padding: '11px 20px', gap: 8, alignItems: 'center',
+                    padding: '11px 22px', gap: 10, alignItems: 'center',
                   }}>
                     {/* Channel */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
@@ -476,7 +482,7 @@ export default function CurrentMix() {
 
               return (
                 <div style={{
-                  padding: '10px 20px',
+                  padding: '10px 22px',
                   borderTop: '1px solid var(--border-subtle)',
                   backgroundColor: 'var(--bg-root)',
                   borderRadius: drawerChannel ? '0' : '0 0 12px 12px',

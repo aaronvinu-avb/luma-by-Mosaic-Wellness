@@ -227,8 +227,8 @@ export default function WhyItWorks() {
       {/* ── D. Diminishing Returns ────────────────────────────────────────── */}
       <div>
         <p style={{ ...T.overline, marginBottom: 6 }}>Diminishing returns</p>
-        <p style={{ ...T.body, fontSize: 13, marginBottom: 16, color: 'var(--text-secondary)' }}>
-          Every channel reaches a point where each additional pound of spend returns less than the previous. The optimizer identifies this curve per channel — channels already operating near saturation receive less budget, freeing it for channels with better marginal return.
+        <p style={{ ...T.body, fontSize: 12, marginBottom: 16 }}>
+          Channels near saturation receive less budget — freeing it for channels with stronger marginal return.
         </p>
 
         {/* Key concepts */}
@@ -390,9 +390,8 @@ export default function WhyItWorks() {
       {expl && (
         <div style={{ marginTop: 6 }}>
           <p style={{ ...T.overline, marginBottom: 6 }}>Timing effects · {selectedChannel}</p>
-          <p style={{ ...T.body, fontSize: 13, marginBottom: 16, color: 'var(--text-secondary)' }}>
-            Timing effects show how channel performance varies by month and day of week. Where the signal is strong, the optimizer weights planning periods accordingly.
-            Where it is weak, timing effects are moderated to avoid over-fitting sparse patterns.
+          <p style={{ ...T.body, fontSize: 12, marginBottom: 16 }}>
+            Monthly and day-of-week patterns are applied where the signal is strong enough to be reliable.
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
@@ -557,8 +556,8 @@ export default function WhyItWorks() {
       {/* ── F. Confidence and Uncertainty ─────────────────────────────────── */}
       <div>
         <p style={{ ...T.overline, marginBottom: 6 }}>Confidence and uncertainty</p>
-        <p style={{ ...T.body, fontSize: 13, marginBottom: 16, color: 'var(--text-secondary)' }}>
-          The optimizer is explicit about what it knows and does not know. Channels with stronger, more consistent historical signals receive more decisive recommendations. Where data is thin or volatile, the model applies caution.
+        <p style={{ ...T.body, fontSize: 12, marginBottom: 16 }}>
+          Stronger, more consistent signals lead to more decisive recommendations. Thin or volatile channels are handled with caution.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 14 }}>
 
@@ -640,8 +639,8 @@ export default function WhyItWorks() {
       {/* ── G. Recommendation Logic Summary ──────────────────────────────── */}
       <div>
         <p style={{ ...T.overline, marginBottom: 6 }}>Recommendation logic</p>
-        <p style={{ ...T.body, fontSize: 13, marginBottom: 16, color: 'var(--text-secondary)' }}>
-          Here is why the optimizer reached the recommended allocation — one clear reason per channel.
+        <p style={{ ...T.body, fontSize: 12, marginBottom: 16 }}>
+          One reason per channel — grouped by recommended direction.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
 
