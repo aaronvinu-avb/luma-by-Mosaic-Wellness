@@ -16,6 +16,7 @@ import {
   classifyMixChannelEfficiency,
   getPeriodTimeWeightSums,
   getPortfolioWeightedROAS,
+  getPeriodicMarginalROAS,
   type MixChannelEfficiency,
 } from '@/lib/calculations';
 import {
@@ -28,8 +29,6 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowUpRight,
-  ArrowDownRight,
-  Minus,
   Zap,
   BarChart3,
   Calendar,
@@ -94,6 +93,10 @@ export default function MixOptimizer() {
   const [customStartMonth, setCustomStartMonth] = useState(defaultStartKey);
   const [customEndMonth, setCustomEndMonth] = useState(defaultEndKey);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [expandedManualRows, setExpandedManualRows] = useState<Set<string>>(new Set());
+  const [showWhyAllocation, setShowWhyAllocation] = useState(false);
+  const [showComparisonChart, setShowComparisonChart] = useState(false);
+  const [showBudgetScenarios, setShowBudgetScenarios] = useState(false);
   const [showAllRationale, setShowAllRationale] = useState(false);
   const safeBudget = Number.isFinite(budget) ? Math.max(0, budget) : 0;
 
@@ -440,6 +443,25 @@ export default function MixOptimizer() {
       return next;
     });
   };
+
+  const toggleManualRowExpand = (ch: string) => {
+    setExpandedManualRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(ch)) next.delete(ch);
+      else next.add(ch);
+      return next;
+    });
+  };
+
+  const allocationDeltaLeaders = useMemo(() => {
+    return CHANNELS.map((ch) => ({
+      ch,
+      delta: Math.abs((optimalFractions[ch] || 0) - (projectedPlan.channelShares[ch] || 0)) * 100,
+    }))
+      .sort((a, b) => b.delta - a.delta)
+      .slice(0, 3)
+      .filter((x) => x.delta >= 0.4);
+  }, [optimalFractions, projectedPlan.channelShares]);
 
   const efficiencyBadgeStyles: Record<
     MixChannelEfficiency,
@@ -792,7 +814,7 @@ export default function MixOptimizer() {
             <div>
               <p style={T.overline}>Channel Allocation</p>
               <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
-                Your interactive mix vs AI recommendation (sliders below update the first column in real time)
+                Tap a row for spend, revenue, marginal ROAS, and rationale — sliders are in Manual Allocation below.
               </p>
             </div>
             <button onClick={applyOptimal} style={{
@@ -806,21 +828,22 @@ export default function MixOptimizer() {
           <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 16 }} />
         </div>
 
-        {/* Table header */}
+        {/* Table header — compact summary columns only */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: '1.8fr 1fr 1fr 0.7fr 0.8fr 28px',
+          gridTemplateColumns: 'minmax(120px,1.4fr) 56px 56px 52px minmax(72px,0.9fr) 28px',
           padding: '10px 24px',
           gap: 8,
           backgroundColor: 'var(--bg-root)',
           borderBottom: '1px solid var(--border-subtle)',
+          alignItems: 'center',
         }}>
-          {['Channel', 'Your mix', 'AI recommended', 'Gap', 'Status', ''].map(h => (
-            <span key={h} style={{ ...T.overline, fontSize: 10 }}>{h}</span>
+          {['Channel', 'Yours', 'AI', 'Gap', 'Status', ''].map((h) => (
+            <span key={h} style={{ ...T.overline, fontSize: 10, textAlign: h !== 'Channel' && h !== '' ? 'center' : 'left' }}>{h}</span>
           ))}
         </div>
 
-        {/* Channel rows */}
+        {/* Channel accordion rows */}
         {CHANNELS.map((ch, ci) => {
           const yourPct = Math.round((projectedPlan.channelShares[ch] || 0) * 100);
           const histPct = Math.round((currentFractions[ch] || 0) * 100);
@@ -834,124 +857,153 @@ export default function MixOptimizer() {
           const sea = seasonality.find(s => s.channel === ch);
           const dow = dowMetrics.find(d => d.channel === ch);
           const reason = channelReasons[ch];
+          const model = models.find((m) => m.channel === ch);
+          const periodW = periodWeightSums[ch] ?? 1;
+          const monthlySpendUser = durationMonthCount > 0
+            ? (projectedPlan.channelTotals[ch]?.spend || 0) / durationMonthCount
+            : 0;
+          const periodSpendUser = projectedPlan.channelTotals[ch]?.spend || 0;
+          const revUser = projectedPlan.channelTotals[ch]?.revenue || 0;
+          const revOptCh = recommendedPlan.channelTotals[ch]?.revenue || 0;
+          const marg = model
+            ? getPeriodicMarginalROAS(model, monthlySpendUser, periodW)
+            : 0;
+          const dimNote = cap
+            ? (Number.isFinite(cap.capSpend) && cap.bucketROAS.high > 0 && cap.bucketROAS.high < cap.blendedROAS
+                ? 'Higher historical spend tiers show weaker ROAS than your blended average — extra budget hits diminishing returns.'
+                : cap.capReason.length > 140 ? `${cap.capReason.slice(0, 137)}…` : cap.capReason)
+            : 'No saturation diagnostics for this channel.';
 
           return (
             <div key={ch} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-              {/* Main row */}
-              <div
+              {/* Collapsed summary — decision-focused only */}
+              <button
+                type="button"
                 onClick={() => toggleRowExpand(ch)}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1.8fr 1fr 1fr 0.7fr 0.8fr 28px',
-                  padding: '14px 24px',
+                  gridTemplateColumns: 'minmax(120px,1.4fr) 56px 56px 52px minmax(72px,0.9fr) 28px',
+                  padding: '12px 24px',
                   gap: 8,
                   alignItems: 'center',
                   cursor: 'pointer',
                   transition: 'background-color 120ms',
+                  width: '100%',
+                  border: 'none',
+                  background: 'transparent',
+                  textAlign: 'left',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--border-subtle)')}
-                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--border-subtle)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
               >
-                {/* Channel name */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
                   <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }} />
                 </div>
-
-                {/* Your mix (matches sliders + projected plan) */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, height: 4, backgroundColor: 'var(--border-subtle)', borderRadius: 2, overflow: 'hidden', maxWidth: 60 }}>
-                    <div style={{ width: `${Math.min(100, yourPct * 2.5)}%`, height: '100%', backgroundColor: 'rgba(96,165,250,0.5)', borderRadius: 2, transition: 'width 300ms' }} />
-                  </div>
-                  <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', minWidth: 32 }}>{yourPct}%</span>
-                </div>
-
-                {/* AI recommended */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, height: 4, backgroundColor: 'var(--border-subtle)', borderRadius: 2, overflow: 'hidden', maxWidth: 60 }}>
-                    <div style={{ width: `${Math.min(100, optPct * 2.5)}%`, height: '100%', backgroundColor: '#E8803A', borderRadius: 2, transition: 'width 300ms' }} />
-                  </div>
-                  <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', minWidth: 32 }}>{optPct}%</span>
-                </div>
-
-                {/* Change */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  {delta > 0 ? <ArrowUpRight size={13} style={{ color: '#34D399' }} /> :
-                   delta < 0 ? <ArrowDownRight size={13} style={{ color: '#F87171' }} /> :
-                   <Minus size={13} style={{ color: 'var(--text-muted)' }} />}
-                  <span style={{
-                    fontFamily: 'Outfit', fontSize: 12, fontWeight: 600,
-                    color: delta > 0 ? '#34D399' : delta < 0 ? '#F87171' : 'var(--text-muted)',
-                  }}>
-                    {delta > 0 ? '+' : ''}{delta}%
-                  </span>
-                </div>
-
-                {/* Efficiency badge */}
+                <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'center' }}>{yourPct}%</span>
+                <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center' }}>{optPct}%</span>
+                <span style={{
+                  fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, textAlign: 'center',
+                  color: delta > 0 ? '#34D399' : delta < 0 ? '#F87171' : 'var(--text-muted)',
+                }}>
+                  {delta > 0 ? '+' : ''}{delta}%
+                </span>
                 <span style={{
                   fontFamily: 'Outfit', fontSize: 10, fontWeight: 700,
                   color: badge.color, backgroundColor: badge.bg,
-                  padding: '3px 8px', borderRadius: 4,
+                  padding: '4px 8px', borderRadius: 4,
                   textTransform: 'uppercase', letterSpacing: '0.04em',
-                  whiteSpace: 'nowrap',
+                  whiteSpace: 'nowrap', justifySelf: 'start',
                 }}>
                   {badge.label}
                 </span>
+                <span style={{ display: 'flex', justifyContent: 'center' }}>
+                  {isExpanded ? <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />}
+                </span>
+              </button>
 
-                {/* Expand chevron */}
-                {isExpanded
-                  ? <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
-                  : <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />}
-              </div>
-
-              {/* Expanded detail */}
+              {/* Expanded detail — grouped Performance / Logic / Timing */}
               {isExpanded && (
                 <div style={{
-                  padding: '0 24px 16px 50px',
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-                  gap: 12,
+                  padding: '0 24px 18px 24px',
                   animation: 'card-enter 200ms ease both',
                 }}>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
-                    <p style={{ ...T.overline, fontSize: 10 }}>Hist. ROAS</p>
-                    <p style={{ ...T.value, fontSize: 16, color, marginTop: 4 }}>{summary ? `${summary.roas.toFixed(2)}x` : '—'}</p>
-                  </div>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
-                    <p style={{ ...T.overline, fontSize: 10 }}>Saturation Cap</p>
-                    <p style={{ ...T.value, fontSize: 16, marginTop: 4 }}>
-                      {cap && Number.isFinite(cap.capSpend) ? formatINRCompact(cap.capSpend) : 'No limit'}
-                    </p>
-                  </div>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
-                    <p style={{ ...T.overline, fontSize: 10 }}>Best Day</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                      <Sun size={14} style={{ color: '#FBBF24' }} />
-                      <span style={{ ...T.value, fontSize: 14 }}>{dow ? DOW_NAMES_SHORT[dow.bestDay] : '—'}</span>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                    gap: 14,
+                  }}>
+                    <div style={{ borderRadius: 10, padding: '12px 14px', border: CARD_BORDER, backgroundColor: 'var(--bg-root)' }}>
+                      <p style={{ ...T.overline, fontSize: 10, marginBottom: 10 }}>Performance</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Projected spend (period)</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{formatINRCompact(periodSpendUser)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Monthly spend (your mix)</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{formatINRCompact(monthlySpendUser)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Expected revenue (your mix)</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{formatINRCompact(revUser)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Expected revenue (AI mix)</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{formatINRCompact(revOptCh)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Marginal ROAS (period)</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{marg.toFixed(2)}x</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Historical ROAS</span>
+                          <span style={{ ...T.value, fontSize: 13, color }}>{summary ? `${summary.roas.toFixed(2)}x` : '—'}</span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
-                    <p style={{ ...T.overline, fontSize: 10 }}>Peak Season</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                      <Calendar size={14} style={{ color: '#60A5FA' }} />
-                      <span style={{ ...T.value, fontSize: 14 }}>{sea ? MONTH_NAMES_SHORT[sea.peakMonth] : '—'}</span>
-                    </div>
-                  </div>
-                  <p style={{ gridColumn: '1 / -1', ...T.helper, fontSize: 11, margin: 0, color: 'var(--text-muted)' }}>
-                    Historical avg. mix: {histPct}% of spend
-                  </p>
-                  {reason && (
-                    <div style={{
-                      gridColumn: '1 / -1',
-                      backgroundColor: 'rgba(232, 128, 58, 0.03)', borderRadius: 8, padding: '12px 14px',
-                      border: '1px solid rgba(232, 128, 58, 0.12)',
-                    }}>
-                      <p style={{ ...T.helper, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                        <strong style={{ color: '#E8803A', ...T.overline, fontSize: 10 }}>AI Logic: </strong>
-                        {reason}
+
+                    <div style={{ borderRadius: 10, padding: '12px 14px', border: CARD_BORDER, backgroundColor: 'var(--bg-root)' }}>
+                      <p style={{ ...T.overline, fontSize: 10, marginBottom: 10 }}>Recommendation logic</p>
+                      <p style={{ ...T.helper, fontSize: 12, lineHeight: 1.55, margin: 0 }}>
+                        <strong style={{ color: 'var(--text-secondary)' }}>Status · </strong>
+                        {badge.label} vs your {yourPct}% / AI {optPct}%.
+                      </p>
+                      <p style={{ ...T.helper, fontSize: 12, lineHeight: 1.55, marginTop: 10, marginBottom: 0 }}>
+                        <strong style={{ color: 'var(--text-secondary)' }}>Diminishing returns · </strong>
+                        {dimNote}
+                      </p>
+                      <p style={{ ...T.helper, fontSize: 11, color: 'var(--text-muted)', marginTop: 10, marginBottom: 0 }}>
+                        Historical avg. mix {histPct}% · Saturation cap {cap && Number.isFinite(cap.capSpend) ? formatINRCompact(cap.capSpend) : 'none'}.
                       </p>
                     </div>
-                  )}
+
+                    <div style={{ borderRadius: 10, padding: '12px 14px', border: CARD_BORDER, backgroundColor: 'var(--bg-root)' }}>
+                      <p style={{ ...T.overline, fontSize: 10, marginBottom: 10 }}>Timing insights</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Sun size={14} style={{ color: '#FBBF24', flexShrink: 0 }} />
+                          <span style={{ ...T.helper, fontSize: 12 }}>
+                            <strong style={{ color: 'var(--text-secondary)' }}>Best day · </strong>
+                            {dow ? DOW_NAMES_SHORT[dow.bestDay] : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Calendar size={14} style={{ color: '#60A5FA', flexShrink: 0 }} />
+                          <span style={{ ...T.helper, fontSize: 12 }}>
+                            <strong style={{ color: 'var(--text-secondary)' }}>Peak season · </strong>
+                            {sea ? MONTH_NAMES_SHORT[sea.peakMonth] : '—'}
+                          </span>
+                        </div>
+                        {reason && (
+                          <p style={{ ...T.helper, fontSize: 12, lineHeight: 1.55, margin: 0 }}>
+                            <strong style={{ color: '#E8803A' }}>Rationale · </strong>
+                            {reason}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -960,19 +1012,45 @@ export default function MixOptimizer() {
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          SECTION 5 — WHY THIS ALLOCATION (Relocated below table)
+          SECTION 5 — WHY THIS ALLOCATION (progressive disclosure)
           ═══════════════════════════════════════════════════════════════════════ */}
       {Object.keys(channelReasons).length > 0 && (
         <div style={{
           backgroundColor: 'var(--bg-card)',
           border: CARD_BORDER,
           borderRadius: CARD_RADIUS,
-          padding: CARD_PADDING,
+          overflow: 'hidden',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <Lightbulb size={15} style={{ color: '#FBBF24', flexShrink: 0 }} />
-            <p style={T.overline}>Why this allocation changed</p>
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowWhyAllocation(!showWhyAllocation)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+              padding: CARD_PADDING,
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+              <Lightbulb size={18} style={{ color: '#FBBF24', flexShrink: 0 }} />
+              <div>
+                <p style={T.overline}>Why this allocation changed</p>
+                <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
+                  {showWhyAllocation ? 'Hide narrative detail' : 'Open to see how AI differs from historical spend'}
+                </p>
+              </div>
+            </div>
+            {showWhyAllocation ? <ChevronDown size={18} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={18} style={{ color: 'var(--text-muted)' }} />}
+          </button>
+
+          {showWhyAllocation && (
+          <div style={{ padding: '0 24px 20px' }}>
           <p style={{ ...T.helper, fontSize: 12, marginBottom: 16 }}>
             Explains how the AI mix diverges from <strong style={{ color: 'var(--text-secondary)' }}>historical</strong> spend (use Reset on sliders to snap back to that baseline).
           </p>
@@ -1008,11 +1086,12 @@ export default function MixOptimizer() {
 
           {remainingRecommendations.length > 0 && (
             <button
+              type="button"
               onClick={() => setShowAllRationale(!showAllRationale)}
               style={{
                 fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600,
                 color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer',
-                marginTop: 14, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px',
+                marginTop: 14, display: 'flex', alignItems: 'center', gap: 4, padding: '6px 0',
               }}
             >
               {showAllRationale ? 'Hide detailed reasons' : `Show all channels (${remainingRecommendations.length} more)`}
@@ -1049,6 +1128,8 @@ export default function MixOptimizer() {
               })}
             </div>
           )}
+          </div>
+          )}
         </div>
       )}
 
@@ -1073,16 +1154,18 @@ export default function MixOptimizer() {
         </button>
       </div>
 
-      {/* ── OPTIMIZER TAB ── */}
+      {/* ── OPTIMIZER TAB (progressive disclosure on sliders + secondary charts) ── */}
       {evidenceTab === 'optimizer' && (
         <div className="mix-optimizer-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-          {/* Manual Allocation Sliders */}
           <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <p style={T.overline}>Manual Allocation</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <p style={T.overline}>Manual Allocation</p>
+                <p style={{ ...T.helper, fontSize: 11, marginTop: 4 }}>Adjust weights — expand a row for spend and revenue detail</p>
+              </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={resetToCurrent} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 8, backgroundColor: 'var(--bg-root)', color: 'var(--text-muted)', border: CARD_BORDER, cursor: 'pointer' }}>Reset</button>
-                <button onClick={applyOptimal} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: 'var(--bg-root)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button type="button" onClick={resetToCurrent} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 8, backgroundColor: 'var(--bg-root)', color: 'var(--text-muted)', border: CARD_BORDER, cursor: 'pointer' }}>Reset</button>
+                <button type="button" onClick={applyOptimal} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: 'var(--bg-root)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
                   AI Mix <Sparkles size={12} />
                 </button>
               </div>
@@ -1098,31 +1181,50 @@ export default function MixOptimizer() {
                 const isPaused = paused.has(ch);
                 const color = CHANNEL_COLORS[ci];
                 const delta = optPct - pct;
+                const manualOpen = expandedManualRows.has(ch);
 
                 return (
-                  <div key={ch} style={{ opacity: isPaused ? 0.4 : 1, border: '1px solid var(--border-strong)', borderRadius: 12, padding: '12px 14px', backgroundColor: 'var(--bg-root)', transition: 'opacity 200ms' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div key={ch} style={{ opacity: isPaused ? 0.4 : 1, border: '1px solid var(--border-strong)', borderRadius: 12, padding: '10px 12px', backgroundColor: 'var(--bg-root)', transition: 'opacity 200ms' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
-                        <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }} />
+                        <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }} />
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        {delta !== 0 && !isPaused && (
-                          <span style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 600, color: delta > 0 ? '#34D399' : '#F87171', backgroundColor: delta > 0 ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)', padding: '2px 6px', borderRadius: 4 }}>
-                            AI: {delta > 0 ? '+' : ''}{delta}%
-                          </span>
-                        )}
-                        <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 32, textAlign: 'right' }}>{pct}%</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 36, textAlign: 'right' }}>{pct}%</span>
                         <Switch checked={!isPaused} onCheckedChange={() => togglePause(ch)} />
+                        <button
+                          type="button"
+                          onClick={() => toggleManualRowExpand(ch)}
+                          aria-expanded={manualOpen}
+                          aria-label={manualOpen ? 'Hide channel detail' : 'Show channel detail'}
+                          style={{
+                            border: 'none', background: 'var(--border-subtle)', borderRadius: 8, padding: '6px',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
+                        >
+                          {manualOpen ? <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />}
+                        </button>
                       </div>
                     </div>
-                    <Slider value={[pct]} min={0} max={60} step={1} onValueChange={v => handleSlider(ch, v)} disabled={isPaused} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-                      <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>{formatINRCompact(periodAmt)} spend</span>
-                      <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color }}>
-                        → {formatINRCompact(projRev)} rev ({periodAmt > 0 ? (projRev / periodAmt).toFixed(2) : '0.00'}x)
-                      </span>
+                    <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 8 }}>
+                      <Slider value={[pct]} min={0} max={60} step={1} onValueChange={(v) => handleSlider(ch, v)} disabled={isPaused} />
                     </div>
+                    {manualOpen && !isPaused && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-subtle)' }}>
+                        {delta !== 0 && (
+                          <p style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 600, color: delta > 0 ? '#34D399' : '#F87171', margin: '0 0 8px 0' }}>
+                            vs AI recommendation: {delta > 0 ? '+' : ''}{delta}%
+                          </p>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>{formatINRCompact(periodAmt)} period spend</span>
+                          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color }}>
+                            {formatINRCompact(projRev)} projected revenue · {periodAmt > 0 ? (projRev / periodAmt).toFixed(2) : '0.00'}x
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1133,58 +1235,93 @@ export default function MixOptimizer() {
             </div>
           </div>
 
-          {/* Right panel — Charts & Scenarios */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {/* Current vs Optimal Chart */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
-              <p style={{ ...T.overline, marginBottom: 16 }}>Current vs Optimal Allocation</p>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={comparisonData} barCategoryGap="30%">
-                  <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
-                  <XAxis dataKey="channel" tick={{ fontSize: 8, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} angle={-35} textAnchor="end" height={60} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} unit="%" />
-                  <Tooltip {...tooltipStyle} formatter={(v: number, name: string) => [`${v.toFixed(1)}%`, name]} />
-                  <Legend wrapperStyle={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', marginTop: 10 }} />
-                  <Bar dataKey="current" fill="rgba(96,165,250,0.6)" name="Your Allocation" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="optimal" fill="rgba(232,128,58,0.85)" name="AI Optimal" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <p style={T.overline}>Allocation comparison</p>
+              <p style={{ ...T.helper, fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>
+                {allocationDeltaLeaders.length > 0
+                  ? <>Largest absolute gaps vs AI: <strong style={{ color: 'var(--text-secondary)' }}>{allocationDeltaLeaders.map((x) => x.ch).join(', ')}</strong>.</>
+                  : 'Your mix is already close to the AI split across channels.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowComparisonChart(!showComparisonChart)}
+                style={{
+                  marginTop: 12, fontFamily: 'Outfit', fontSize: 12, fontWeight: 600,
+                  padding: '8px 14px', borderRadius: 8, border: CARD_BORDER, background: 'var(--bg-root)',
+                  color: 'var(--text-primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {showComparisonChart ? 'Hide chart' : 'View allocation comparison'}
+                {showComparisonChart ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+              {showComparisonChart && (
+                <div style={{ marginTop: 16 }}>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={comparisonData} barCategoryGap="30%">
+                      <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
+                      <XAxis dataKey="channel" tick={{ fontSize: 8, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} angle={-35} textAnchor="end" height={56} />
+                      <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} unit="%" />
+                      <Tooltip {...tooltipStyle} formatter={(v: number, name: string) => [`${v.toFixed(1)}%`, name]} />
+                      <Legend wrapperStyle={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }} />
+                      <Bar dataKey="current" fill="rgba(96,165,250,0.6)" name="Your allocation" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="optimal" fill="rgba(232,128,58,0.85)" name="AI optimal" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
 
-            {/* Budget Scenarios */}
             <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, overflow: 'hidden' }}>
-              <div style={{ padding: '20px 24px 0' }}>
-                <p style={T.overline}>Budget Scenarios</p>
-                <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
+              <div style={{ padding: CARD_PADDING }}>
+                <p style={T.overline}>Budget scenarios</p>
+                <p style={{ ...T.helper, fontSize: 12, marginTop: 8 }}>
+                  At <strong style={{ color: 'var(--text-secondary)' }}>{formatINRCompact(BUDGET_SCENARIOS[1].value)}</strong>/mo (current tier), optimized portfolio revenue ≈{' '}
+                  <strong style={{ color: 'var(--text-secondary)' }}>{formatINRCompact(scenarioResults[1]?.revenue ?? 0)}</strong> over {durationLabel}.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowBudgetScenarios(!showBudgetScenarios)}
+                  style={{
+                    marginTop: 12, fontFamily: 'Outfit', fontSize: 12, fontWeight: 600,
+                    padding: '8px 14px', borderRadius: 8, border: CARD_BORDER, background: 'var(--bg-root)',
+                    color: 'var(--text-primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                  }}
+                >
+                  {showBudgetScenarios ? 'Hide scenario table' : 'View budget scenarios'}
+                  {showBudgetScenarios ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
               </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ backgroundColor: 'var(--bg-card)' }}>
-                    {[scenarioBudgetLabel, 'Proj. Revenue', 'ROAS', `vs ${formatINRCompact(BUDGET_SCENARIOS[1].value * durationMonthCount)}`].map(h => (
-                      <th key={h} style={{ padding: '10px 16px', textAlign: 'left', ...T.overline, fontSize: 10 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {BUDGET_SCENARIOS.map((s, i) => {
-                    const sr = scenarioResults[i] || { revenue: 0, roas: 0 };
-                    const baseline = scenarioResults[1]?.revenue || 0;
-                    const diff = sr.revenue - baseline;
-                    return (
-                      <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}
-                        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--border-subtle)')}
-                        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
-                        <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINRCompact(s.value * durationMonthCount)}</td>
-                        <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{formatINRCompact(sr.revenue)}</td>
-                        <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: sr.roas >= 4 ? '#34D399' : sr.roas >= 2 ? '#FBBF24' : '#F87171' }}>{sr.roas.toFixed(2)}x</td>
-                        <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: diff >= 0 ? '#34D399' : '#F87171' }}>
-                          {diff >= 0 ? '+' : ''}{formatINRCompact(Math.abs(diff))}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              {showBudgetScenarios && (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--bg-card)' }}>
+                      {[scenarioBudgetLabel, 'Proj. Revenue', 'ROAS', `vs ${formatINRCompact(BUDGET_SCENARIOS[1].value * durationMonthCount)}`].map((h) => (
+                        <th key={h} style={{ padding: '10px 16px', textAlign: 'left', ...T.overline, fontSize: 10 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {BUDGET_SCENARIOS.map((s, i) => {
+                      const sr = scenarioResults[i] || { revenue: 0, roas: 0 };
+                      const baseline = scenarioResults[1]?.revenue || 0;
+                      const diff = sr.revenue - baseline;
+                      return (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--border-subtle)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}>
+                          <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINRCompact(s.value * durationMonthCount)}</td>
+                          <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{formatINRCompact(sr.revenue)}</td>
+                          <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: sr.roas >= 4 ? '#34D399' : sr.roas >= 2 ? '#FBBF24' : '#F87171' }}>{sr.roas.toFixed(2)}x</td>
+                          <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: diff >= 0 ? '#34D399' : '#F87171' }}>
+                            {diff >= 0 ? '+' : ''}{formatINRCompact(Math.abs(diff))}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>
