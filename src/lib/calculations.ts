@@ -266,12 +266,19 @@ export function getChannelSaturationModels(data: MarketingRecord[] | AggregatedS
 
     if (points.length === 0) return { channel, alpha: 1, scatterPoints: [], saturationPoint: 0 };
 
-    // alpha = median of (normalized_revenue / ln(spend + 1))
-    const alphas = points
-      .map(p => p.revenue / Math.log(p.spend + 1))
-      .filter(a => isFinite(a) && a > 0)
-      .sort((a, b) => a - b);
-    const alpha = alphas.length > 0 ? alphas[Math.floor(alphas.length / 2)] : 1;
+    // alpha = weighted average of (normalized_revenue / ln(spend + 1))
+    // We weight points by spend^0.5 to give more importance to high-spend periods
+    // which represent the channel's behavior at scale better than low-spend noise.
+    const alphaNum = points.reduce((acc, p) => {
+      const a = p.revenue / Math.log(p.spend + 1);
+      const weight = Math.sqrt(p.spend);
+      return isFinite(a) && a > 0 ? acc + (a * weight) : acc;
+    }, 0);
+    const alphaDenom = points.reduce((acc, p) => {
+      const weight = Math.sqrt(p.spend);
+      return acc + weight;
+    }, 0);
+    const alpha = alphaDenom > 0 ? alphaNum / alphaDenom : 1;
 
     // Bucket into scatter points for the visual chart
     const sorted = [...points].sort((a, b) => a.spend - b.spend);

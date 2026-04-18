@@ -352,19 +352,27 @@ export default function MixOptimizer() {
     return actions;
   }, [optimalFractions, currentFractions, summaries]);
 
-  // Top 5 recommendations sorted by importance
+  // Top 5 recommendations sorted by absolute percentage delta (the most important reallocations)
   const topRecommendations = useMemo(() => {
     return CHANNELS
       .filter(ch => channelActions[ch]?.action !== 'hold')
-      .sort((a, b) => (channelActions[b]?.importance || 0) - (channelActions[a]?.importance || 0))
+      .sort((a, b) => {
+        const deltaA = Math.abs((optimalFractions[a] || 0) - (currentFractions[a] || 0));
+        const deltaB = Math.abs((optimalFractions[b] || 0) - (currentFractions[b] || 0));
+        return deltaB - deltaA;
+      })
       .slice(0, 5);
-  }, [channelActions]);
+  }, [optimalFractions, currentFractions, channelActions]);
 
   const remainingRecommendations = useMemo(() => {
     return CHANNELS
       .filter(ch => !topRecommendations.includes(ch))
-      .sort((a, b) => (channelActions[b]?.importance || 0) - (channelActions[a]?.importance || 0));
-  }, [channelActions, topRecommendations]);
+      .sort((a, b) => {
+        const deltaA = Math.abs((optimalFractions[a] || 0) - (currentFractions[a] || 0));
+        const deltaB = Math.abs((optimalFractions[b] || 0) - (currentFractions[b] || 0));
+        return deltaB - deltaA;
+      });
+  }, [optimalFractions, currentFractions, topRecommendations]);
 
   // ── Seasonal peaks and Best-day tables for evidence tabs ──────────────────
   const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -484,7 +492,18 @@ export default function MixOptimizer() {
 
   if (isLoading) return <DashboardSkeleton />;
 
-  // ── Shared styles ─────────────────────────────────────────────────────────
+  // ── DESIGN TOKENS ─────────────────────────────────────────────────────────
+  // Typography tiers (strict 3-level hierarchy)
+  const T = {
+    overline: { fontFamily: 'Outfit' as const, fontSize: 11, fontWeight: 600 as const, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.08em', margin: 0 } as const,
+    value:    { fontFamily: 'Outfit' as const, fontWeight: 700 as const, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0, fontFeatureSettings: '"tnum"' as const } as const,
+    helper:   { fontFamily: 'Plus Jakarta Sans' as const, fontSize: 13, fontWeight: 400 as const, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 } as const,
+  };
+  // Spacing scale: 4 / 8 / 12 / 16 / 24 / 32
+  const CARD_PADDING = '20px 24px';
+  const CARD_RADIUS = 14;
+  const CARD_BORDER = '1px solid var(--border-subtle)';
+
   const evidenceTabStyle = (active: boolean) => ({
     fontFamily: 'Outfit' as const, fontSize: 12, fontWeight: 600 as const,
     padding: '8px 16px', borderRadius: 8, cursor: 'pointer' as const, transition: '150ms',
@@ -506,12 +525,12 @@ export default function MixOptimizer() {
       {/* ═══════════════════════════════════════════════════════════════════════
           SECTION 1 — HEADER & CONTROLS
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="mobile-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className="mobile-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h1 style={{ fontFamily: 'Outfit', fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em', lineHeight: 1.2 }}>
+          <h1 style={{ fontFamily: 'Outfit', fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em', lineHeight: 1.2, margin: 0 }}>
             Marketing Mix Optimizer
           </h1>
-          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)', marginTop: 6, marginBottom: 12 }}>AI-powered budget allocation & revenue forecasting</p>
+          <p style={{ ...T.helper, marginTop: 4 }}>AI-powered budget allocation & revenue forecasting</p>
         </div>
         <button 
           onClick={() => exportToCSV(CHANNELS.map(ch => {
@@ -529,32 +548,34 @@ export default function MixOptimizer() {
             'Optimal Revenue': optRev.toFixed(0)
             };
           }), 'Luma_Marketing_Mix_Optimization')}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all hover:scale-105 active:scale-95"
           style={{ 
             backgroundColor: 'var(--bg-card)', 
-            border: '1px solid var(--border-strong)', 
+            border: CARD_BORDER, 
+            borderRadius: 10,
             color: 'var(--text-primary)',
             fontFamily: 'Outfit',
             fontSize: 13,
             fontWeight: 600,
-            boxShadow: 'var(--shadow-sm)',
-            cursor: 'pointer'
+            padding: '10px 20px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'transform 120ms',
           }}
         >
-          <Download size={16} />
+          <Download size={15} />
           Export
         </button>
       </div>
 
       {/* Control Bar */}
-      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+      <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 24, alignItems: 'start' }}>
           <div style={{ minWidth: 0 }}>
-            <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-              Monthly Budget
-            </p>
+            <p style={{ ...T.overline, marginBottom: 8 }}>Monthly Budget</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 10, padding: '10px 12px' }}>
-              <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>₹</span>
+              <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-muted)' }}>₹</span>
               <input
                 type="number"
                 value={safeBudget}
@@ -563,18 +584,16 @@ export default function MixOptimizer() {
                   const parsed = Number(e.target.value);
                   setBudget(Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
                 }}
-                style={{ flex: 1, minWidth: 110, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'Outfit', fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
+                style={{ flex: 1, minWidth: 110, background: 'transparent', border: 'none', outline: 'none', ...T.value, fontSize: 18 }}
               />
             </div>
-            <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-              {formatINRCompact(safeBudget)} / month · {formatINRCompact(totalPlannedBudget)} total
+            <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
+              {formatINRCompact(safeBudget)}/mo · {formatINRCompact(totalPlannedBudget)} total
             </p>
           </div>
 
           <div style={{ minWidth: 0 }}>
-            <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-              Planning Period
-            </p>
+            <p style={{ ...T.overline, marginBottom: 8 }}>Planning Period</p>
             <select
               value={planningPeriod}
               onChange={(e) => setPlanningPeriod(e.target.value as PlanningPeriod)}
@@ -597,7 +616,7 @@ export default function MixOptimizer() {
                     <option key={`start-${m.key}`} value={m.key}>{`${monthNames[m.month]} ${m.year}`}</option>
                   ))}
                 </select>
-                <span style={{ fontFamily: 'Outfit', fontSize: 10, color: 'var(--text-muted)' }}>to</span>
+                <span style={{ ...T.overline, fontSize: 10, letterSpacing: 0 }}>to</span>
                 <select
                   value={customEndMonth}
                   onChange={(e) => setCustomEndMonth(e.target.value)}
@@ -612,29 +631,27 @@ export default function MixOptimizer() {
           </div>
 
           <div style={{ minWidth: 0 }}>
-            <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-              Planning Mode
-            </p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <p style={{ ...T.overline, marginBottom: 8 }}>Planning Mode</p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[
-                { value: 'conservative', label: 'Conservative (0.8x)' },
-                { value: 'target', label: 'Target (1.0x)' },
-                { value: 'aggressive', label: 'Aggressive (1.2x)' },
+                { value: 'conservative', label: 'Conservative' },
+                { value: 'target', label: 'Target' },
+                { value: 'aggressive', label: 'Aggressive' },
               ].map((mode) => (
                 <button
                   key={mode.value}
                   onClick={() => setPlanningMode(mode.value as PlanningMode)}
                   style={{
-                    fontFamily: 'Plus Jakarta Sans',
+                    fontFamily: 'Outfit',
                     fontSize: 12,
                     fontWeight: 600,
-                    padding: '10px 14px',
-                    borderRadius: 999,
+                    padding: '9px 16px',
+                    borderRadius: 8,
                     border: planningMode === mode.value ? '1px solid var(--border-strong)' : '1px solid var(--border-subtle)',
                     backgroundColor: planningMode === mode.value ? 'var(--bg-root)' : 'transparent',
                     color: planningMode === mode.value ? 'var(--text-primary)' : 'var(--text-muted)',
                     cursor: 'pointer',
-                    transition: '150ms'
+                    transition: '120ms',
                   }}
                 >
                   {mode.label}
@@ -643,17 +660,12 @@ export default function MixOptimizer() {
             </div>
           </div>
         </div>
-
-        {/* Helper line */}
-        <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', opacity: 0.7, marginTop: 2 }}>
-          Recommendations use historical efficiency, diminishing returns, weekday trends, and seasonality.
-        </p>
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           SECTION 2 — OUTCOME CARDS (5 KPIs)
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="mix-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14 }}>
+      <div className="mix-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {[
           {
             label: 'Current Revenue',
@@ -687,20 +699,20 @@ export default function MixOptimizer() {
             className="card-enter"
             style={{
               backgroundColor: 'var(--bg-card)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 14,
-              padding: '18px 20px',
+              border: CARD_BORDER,
+              borderRadius: CARD_RADIUS,
+              padding: CARD_PADDING,
               animationDelay: `${idx * 60}ms`,
             }}
           >
-            <p style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{kpi.label}</p>
-            <p style={{ fontFamily: 'Outfit', fontSize: 24, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em', marginTop: 6 }}>
+            <p style={T.overline}>{kpi.label}</p>
+            <p style={{ ...T.value, fontSize: 26, fontWeight: 800, marginTop: 4 }}>
               {kpi.value}
             </p>
             {kpi.sub && (
-              <p style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: kpi.accent, marginTop: 2 }}>{kpi.sub}</p>
+              <p style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: kpi.accent, margin: '2px 0 0 0' }}>{kpi.sub}</p>
             )}
-            <div style={{ height: 2, backgroundColor: kpi.accent, borderRadius: 1, marginTop: kpi.sub ? 8 : 12, opacity: 0.4 }} />
+            <div style={{ height: 2, backgroundColor: kpi.accent, borderRadius: 1, marginTop: kpi.sub ? 8 : 12, opacity: 0.35 }} />
           </div>
         ))}
       </div>
@@ -711,69 +723,69 @@ export default function MixOptimizer() {
       {revenueOpportunity > 5000 ? (
         <div style={{
           backgroundColor: 'var(--bg-card)',
-          border: '1px solid #34D399',
-          borderRadius: 12,
-          padding: '24px 32px',
+          border: '1px solid rgba(52, 211, 153, 0.3)',
+          borderRadius: CARD_RADIUS,
+          padding: CARD_PADDING,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          backgroundImage: 'linear-gradient(to right, rgba(52, 211, 153, 0.05), transparent)',
+          gap: 24,
+          backgroundImage: 'linear-gradient(135deg, rgba(52, 211, 153, 0.04), transparent)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-            <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: 'rgba(52, 211, 153, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <TrendingUp size={24} color="#34D399" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: 'rgba(52, 211, 153, 0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <TrendingUp size={22} color="#34D399" />
             </div>
-            <div>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>
-                {formatINRCompact(revenueOpportunity)} opportunity identified
-              </h2>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 14, color: 'var(--text-secondary)', margin: '6px 0 0 0', lineHeight: 1.5, maxWidth: 600 }}>
-                The AI recommendation increases blended ROAS from {currentAllocationROAS.toFixed(2)}x to {optimizedROAS.toFixed(2)}x (+{upliftPct.toFixed(1)}% uplift). This accounts for diminishing returns, channel saturation, and seasonality over {durationLabel}.
+            <div style={{ minWidth: 0 }}>
+              <p style={{ ...T.value, fontSize: 18 }}>
+                {formatINRCompact(revenueOpportunity)} revenue opportunity
+              </p>
+              <p style={{ ...T.helper, fontSize: 13, marginTop: 4 }}>
+                ROAS {currentAllocationROAS.toFixed(2)}x → {optimizedROAS.toFixed(2)}x · +{upliftPct.toFixed(1)}% uplift over {durationLabel}
               </p>
             </div>
           </div>
           <button
             onClick={applyOptimal}
             style={{
-              padding: '12px 24px',
+              padding: '10px 20px',
               backgroundColor: '#34D399',
               color: '#000',
-              fontFamily: 'Plus Jakarta Sans',
-              fontSize: 14,
+              fontFamily: 'Outfit',
+              fontSize: 13,
               fontWeight: 700,
               border: 'none',
               borderRadius: 8,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
-              transition: 'transform 150ms',
+              gap: 6,
+              flexShrink: 0,
+              transition: 'transform 120ms',
             }}
           >
-            Apply Allocation <ArrowUpRight size={14} />
+            Apply <ArrowUpRight size={14} />
           </button>
         </div>
       ) : (
         <div style={{
           backgroundColor: 'var(--bg-card)',
-          border: '1px solid var(--border-strong)',
-          borderRadius: 12,
-          padding: '24px 32px',
+          border: CARD_BORDER,
+          borderRadius: CARD_RADIUS,
+          padding: CARD_PADDING,
           display: 'flex',
           alignItems: 'center',
           gap: 16,
         }}>
-           <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: 'var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <CheckCircle size={24} color="var(--text-secondary)" />
-            </div>
-            <div>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>
-                Allocation is near optimal
-              </h2>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 14, color: 'var(--text-secondary)', margin: '6px 0 0 0', lineHeight: 1.5, maxWidth: 600 }}>
-                Your current mix matches or closely approximates the AI recommendation. Blended ROAS is stable at {currentAllocationROAS.toFixed(2)}x. Minimal efficiency gains (+{upliftPct.toFixed(1)}%) are available.
-              </p>
-            </div>
+          <div style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: 'var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <CheckCircle size={22} color="var(--text-muted)" />
+          </div>
+          <div>
+            <p style={{ ...T.value, fontSize: 16 }}>Allocation is near optimal</p>
+            <p style={{ ...T.helper, fontSize: 13, marginTop: 4 }}>
+              Blended ROAS at {currentAllocationROAS.toFixed(2)}x · +{upliftPct.toFixed(1)}% marginal gain available
+            </p>
+          </div>
         </div>
       )}
 
@@ -782,24 +794,22 @@ export default function MixOptimizer() {
           ═══════════════════════════════════════════════════════════════════════ */}
       <div style={{
         backgroundColor: 'var(--bg-card)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: 16,
+        border: CARD_BORDER,
+        borderRadius: CARD_RADIUS,
         overflow: 'hidden',
       }}>
         <div style={{ padding: '20px 24px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-                Channel Allocation
-              </h2>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                Current vs. recommended budget split across {activeChannels.length} active channels
+              <p style={T.overline}>Channel Allocation</p>
+              <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
+                Current vs. recommended split · {activeChannels.length} channels
               </p>
             </div>
             <button onClick={applyOptimal} style={{
-              fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, padding: '8px 16px', borderRadius: 8,
+              fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 8,
               background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: 'var(--bg-root)', border: 'none', cursor: 'pointer',
-              boxShadow: '0 4px 14px rgba(232,128,58,0.25)', display: 'flex', alignItems: 'center', gap: 5,
+              display: 'flex', alignItems: 'center', gap: 6,
             }}>
               <Sparkles size={12} /> Apply AI Mix
             </button>
@@ -817,10 +827,7 @@ export default function MixOptimizer() {
           borderBottom: '1px solid var(--border-subtle)',
         }}>
           {['Channel', 'Current', 'Recommended', 'Change', 'Status', ''].map(h => (
-            <span key={h} style={{
-              fontFamily: 'Outfit', fontSize: 9, fontWeight: 700, color: 'var(--text-muted)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-            }}>{h}</span>
+            <span key={h} style={{ ...T.overline, fontSize: 10 }}>{h}</span>
           ))}
         </div>
 
@@ -916,36 +923,38 @@ export default function MixOptimizer() {
                   gap: 12,
                   animation: 'card-enter 200ms ease both',
                 }}>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-subtle)' }}>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Historical ROAS</p>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color, marginTop: 3 }}>{summary ? `${summary.roas.toFixed(2)}x` : '—'}</p>
+                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
+                    <p style={{ ...T.overline, fontSize: 10 }}>Hist. ROAS</p>
+                    <p style={{ ...T.value, fontSize: 16, color, marginTop: 4 }}>{summary ? `${summary.roas.toFixed(2)}x` : '—'}</p>
                   </div>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-subtle)' }}>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Diminishing Cap</p>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color, marginTop: 3 }}>
-                      {cap && Number.isFinite(cap.capSpend) ? formatINRCompact(cap.capSpend) : 'No cap'}
+                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
+                    <p style={{ ...T.overline, fontSize: 10 }}>Saturation Cap</p>
+                    <p style={{ ...T.value, fontSize: 16, marginTop: 4 }}>
+                      {cap && Number.isFinite(cap.capSpend) ? formatINRCompact(cap.capSpend) : 'No limit'}
                     </p>
                   </div>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-subtle)' }}>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Best Day</p>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color, marginTop: 3 }}>
-                      {dow ? DOW_NAMES_SHORT[dow.bestDay] : '—'}
-                    </p>
+                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
+                    <p style={{ ...T.overline, fontSize: 10 }}>Best Day</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <Sun size={14} style={{ color: '#FBBF24' }} />
+                      <span style={{ ...T.value, fontSize: 14 }}>{dow ? DOW_NAMES_SHORT[dow.bestDay] : '—'}</span>
+                    </div>
                   </div>
-                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-subtle)' }}>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Peak Season</p>
-                    <p style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color, marginTop: 3 }}>
-                      {sea ? MONTH_NAMES_SHORT[sea.peakMonth] : '—'}
-                    </p>
+                  <div style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
+                    <p style={{ ...T.overline, fontSize: 10 }}>Peak Season</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <Calendar size={14} style={{ color: '#60A5FA' }} />
+                      <span style={{ ...T.value, fontSize: 14 }}>{sea ? MONTH_NAMES_SHORT[sea.peakMonth] : '—'}</span>
+                    </div>
                   </div>
                   {reason && (
                     <div style={{
                       gridColumn: '1 / -1',
-                      backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 14px',
-                      border: '1px solid var(--border-subtle)',
+                      backgroundColor: 'rgba(232, 128, 58, 0.03)', borderRadius: 8, padding: '12px 14px',
+                      border: '1px solid rgba(232, 128, 58, 0.12)',
                     }}>
-                      <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                        <strong style={{ color: 'var(--text-primary)' }}>Rationale: </strong>
+                      <p style={{ ...T.helper, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                        <strong style={{ color: '#E8803A', ...T.overline, fontSize: 10 }}>AI Logic: </strong>
                         {reason}
                       </p>
                     </div>
@@ -958,41 +967,41 @@ export default function MixOptimizer() {
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          SECTION 5 — WHY THIS ALLOCATION
+          SECTION 5 — WHY THIS ALLOCATION (Relocated below table)
           ═══════════════════════════════════════════════════════════════════════ */}
       {Object.keys(channelReasons).length > 0 && (
         <div style={{
           backgroundColor: 'var(--bg-card)',
-          border: '1px solid var(--border-strong)',
-          borderRadius: 16,
-          padding: 24,
+          border: CARD_BORDER,
+          borderRadius: CARD_RADIUS,
+          padding: CARD_PADDING,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-            <Lightbulb size={16} style={{ color: '#FBBF24', flexShrink: 0 }} />
-            <h2 style={{ fontFamily: 'Outfit', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-              Why this allocation
-            </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <Lightbulb size={15} style={{ color: '#FBBF24', flexShrink: 0 }} />
+            <p style={T.overline}>Why this allocation changed</p>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
             {topRecommendations.map((ch, i) => {
               const act = channelActions[ch];
               const ci = CHANNELS.indexOf(ch);
               const color = CHANNEL_COLORS[ci];
               return (
                 <div key={ch} className="card-enter" style={{
-                  display: 'flex', alignItems: 'flex-start', gap: 14,
-                  padding: '12px 16px', borderRadius: 10,
+                  display: 'flex', alignItems: 'flex-start', gap: 12,
+                  padding: '14px 16px', borderRadius: 10,
                   backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-subtle)',
                   animationDelay: `${i * 50}ms`,
                 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0, marginTop: 5 }} />
+                  <div style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {act.action === 'increase' ? <TrendingUp size={16} color="#34D399" /> : <TrendingDown size={16} color="#F87171" />}
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                       <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{ch}</span>
                       <span style={actionBadgeStyle(act.action)}>{act.action}</span>
                     </div>
-                    <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+                    <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
                       {channelReasons[ch]}
                     </p>
                   </div>
@@ -1001,49 +1010,48 @@ export default function MixOptimizer() {
             })}
           </div>
 
-          {/* Collapsible "View all" */}
           {remainingRecommendations.length > 0 && (
-            <>
-              <button
-                onClick={() => setShowAllRationale(!showAllRationale)}
-                style={{
-                  fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600,
-                  color: '#E8803A', background: 'none', border: 'none', cursor: 'pointer',
-                  marginTop: 14, display: 'flex', alignItems: 'center', gap: 4, padding: 0,
-                }}
-              >
-                {showAllRationale ? 'Hide' : 'View all channel rationale'}
-                {showAllRationale ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </button>
+            <button
+              onClick={() => setShowAllRationale(!showAllRationale)}
+              style={{
+                fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600,
+                color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer',
+                marginTop: 14, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px',
+              }}
+            >
+              {showAllRationale ? 'Hide detailed reasons' : `Internal: ${remainingRecommendations.length} more rationales...`}
+              {showAllRationale ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          )}
 
-              {showAllRationale && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-                  {remainingRecommendations.map((ch) => {
-                    const act = channelActions[ch];
-                    const ci = CHANNELS.indexOf(ch);
-                    const color = CHANNEL_COLORS[ci];
-                    return (
-                      <div key={ch} style={{
-                        display: 'flex', alignItems: 'flex-start', gap: 14,
-                        padding: '10px 16px', borderRadius: 10,
-                        backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-subtle)',
-                      }}>
-                        <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: color, flexShrink: 0, marginTop: 6 }} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                            <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{ch}</span>
-                            <span style={actionBadgeStyle(act.action)}>{act.action}</span>
-                          </div>
-                          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
-                            {channelReasons[ch]}
-                          </p>
-                        </div>
+          {showAllRationale && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 10, marginTop: 12 }}>
+              {remainingRecommendations.map((ch) => {
+                const act = channelActions[ch];
+                const ci = CHANNELS.indexOf(ch);
+                const color = CHANNEL_COLORS[ci] || '#ccc';
+                return (
+                  <div key={ch} style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 12,
+                    padding: '10px 14px', borderRadius: 10,
+                    backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-subtle)', opacity: 0.8
+                  }}>
+                    <div style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: `${color}10`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: color }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                        <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{ch}</span>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{act.action}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
+                      <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, margin: 0 }}>
+                        {channelReasons[ch]}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
@@ -1073,13 +1081,13 @@ export default function MixOptimizer() {
       {evidenceTab === 'optimizer' && (
         <div className="mix-optimizer-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
           {/* Manual Allocation Sliders */}
-          <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Manual Allocation</h2>
+          <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <p style={T.overline}>Manual Allocation</p>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={resetToCurrent} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, padding: '7px 16px', borderRadius: 8, backgroundColor: 'var(--bg-root)', color: 'var(--text-secondary)', border: '1px solid var(--border-strong)', cursor: 'pointer' }}>Reset to Current</button>
-                <button onClick={applyOptimal} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: 'var(--bg-root)', border: 'none', cursor: 'pointer', boxShadow: '0 4px 14px rgba(232,128,58,0.3)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  AI Recommendation <Sparkles size={12} />
+                <button onClick={resetToCurrent} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 8, backgroundColor: 'var(--bg-root)', color: 'var(--text-muted)', border: CARD_BORDER, cursor: 'pointer' }}>Reset</button>
+                <button onClick={applyOptimal} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: 'var(--bg-root)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  AI Mix <Sparkles size={12} />
                 </button>
               </div>
             </div>
@@ -1132,8 +1140,8 @@ export default function MixOptimizer() {
           {/* Right panel — Charts & Scenarios */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {/* Current vs Optimal Chart */}
-            <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: 24 }}>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Current vs Optimal Allocation</h2>
+            <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
+              <p style={{ ...T.overline, marginBottom: 16 }}>Current vs Optimal Allocation</p>
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={comparisonData} barCategoryGap="30%">
                   <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
@@ -1148,16 +1156,16 @@ export default function MixOptimizer() {
             </div>
 
             {/* Budget Scenarios */}
-            <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, overflow: 'hidden' }}>
+            <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, overflow: 'hidden' }}>
               <div style={{ padding: '20px 24px 0' }}>
-                <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Budget Scenarios</h2>
+                <p style={T.overline}>Budget Scenarios</p>
                 <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ backgroundColor: 'var(--bg-card)' }}>
                     {[scenarioBudgetLabel, 'Proj. Revenue', 'ROAS', `vs ${formatINRCompact(BUDGET_SCENARIOS[1].value * durationMonthCount)}`].map(h => (
-                      <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontFamily: 'Outfit', fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{h}</th>
+                      <th key={h} style={{ padding: '10px 16px', textAlign: 'left', ...T.overline, fontSize: 10 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1188,9 +1196,9 @@ export default function MixOptimizer() {
 
       {/* ── WHY IT WORKS TAB ── */}
       {evidenceTab === 'why' && (
-        <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: 28 }}>
-          <h2 style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>How the optimizer works</h2>
-          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-muted)', marginBottom: 24 }}>
+        <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
+          <p style={{ ...T.overline, marginBottom: 4 }}>How the optimizer works</p>
+          <p style={{ ...T.helper, fontSize: 12, marginBottom: 24 }}>
             Four steps from raw data to allocation recommendation
           </p>
 
@@ -1261,11 +1269,11 @@ export default function MixOptimizer() {
 
       {/* ── DIMINISHING RETURNS TAB ── */}
       {evidenceTab === 'diminishing' && (
-        <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, padding: 24 }}>
+        <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
             <div>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Diminishing Returns</h2>
-              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+              <p style={T.overline}>Diminishing Returns</p>
+              <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
                 More spend does not always mean better return. Select a channel to see its curve.
               </p>
             </div>
@@ -1297,9 +1305,9 @@ export default function MixOptimizer() {
                     { label: 'Current Spend', value: formatINRCompact(currentChannelSpend) },
                     { label: 'High-Bucket ROAS', value: cap ? `${cap.bucketROAS.high.toFixed(2)}x` : '—' },
                   ].map(kpi => (
-                    <div key={kpi.label} style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-subtle)' }}>
-                      <p style={{ fontFamily: 'Outfit', fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{kpi.label}</p>
-                      <p style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color, marginTop: 3 }}>{kpi.value}</p>
+                    <div key={kpi.label} style={{ backgroundColor: 'var(--bg-root)', borderRadius: 8, padding: '10px 12px', border: CARD_BORDER }}>
+                      <p style={{ ...T.overline, fontSize: 10 }}>{kpi.label}</p>
+                      <p style={{ ...T.value, fontSize: 16, color, marginTop: 4 }}>{kpi.value}</p>
                     </div>
                   ))}
                 </div>
@@ -1326,8 +1334,8 @@ export default function MixOptimizer() {
                   </LineChart>
                 </ResponsiveContainer>
 
-                <div style={{ marginTop: 14, padding: '10px 14px', backgroundColor: 'var(--bg-root)', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
-                  <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+                <div style={{ marginTop: 14, padding: '10px 14px', backgroundColor: 'var(--bg-root)', borderRadius: 8, border: CARD_BORDER }}>
+                  <p style={{ ...T.helper, fontSize: 11, lineHeight: 1.6 }}>
                     Points show ROAS at low, medium, and high spend levels. When higher spend drops below the red dashed line (blended average), the channel is capped.
                   </p>
                 </div>
@@ -1339,11 +1347,11 @@ export default function MixOptimizer() {
 
       {/* ── BEST DAYS TAB ── */}
       {evidenceTab === 'bestdays' && (
-        <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, overflow: 'hidden' }}>
+        <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, overflow: 'hidden' }}>
           <div style={{ padding: '20px 24px 0' }}>
-            <h2 style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Best Days by Channel</h2>
-            <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 4, marginBottom: 0 }}>
-              Top performing days to concentrate bids. Based on historical day-of-week ROAS.
+            <p style={T.overline}>Best Days by Channel</p>
+            <p style={{ ...T.helper, fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+              Top performing days to concentrate bids, based on historical day-of-week ROAS.
             </p>
             <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 16 }} />
           </div>
@@ -1353,8 +1361,7 @@ export default function MixOptimizer() {
                 {['Channel', 'Best Day', 'Runner-up'].map(h => (
                   <th key={h} style={{
                     padding: '12px 24px', textAlign: h === 'Channel' ? 'left' : 'center',
-                    fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
-                    textTransform: 'uppercase', letterSpacing: '0.08em',
+                    ...T.overline, fontSize: 10,
                   }}>{h}</th>
                 ))}
               </tr>
@@ -1381,11 +1388,11 @@ export default function MixOptimizer() {
 
       {/* ── SEASONAL PEAKS TAB ── */}
       {evidenceTab === 'seasonal' && (
-        <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', borderRadius: 16, overflow: 'hidden' }}>
+        <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, overflow: 'hidden' }}>
           <div style={{ padding: '20px 24px 0' }}>
-            <h2 style={{ fontFamily: 'Outfit', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Seasonal Peaks by Channel</h2>
-            <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 4, marginBottom: 0 }}>
-              Which months each channel historically outperforms. Budget is weighted toward peak periods automatically.
+            <p style={T.overline}>Seasonal Peaks by Channel</p>
+            <p style={{ ...T.helper, fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+              Which months each channel historically outperforms. Budget is weighted toward peak periods.
             </p>
             <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 16 }} />
           </div>
@@ -1395,8 +1402,7 @@ export default function MixOptimizer() {
                 {['Channel', 'Peak Month', 'Implication'].map(h => (
                   <th key={h} style={{
                     padding: '12px 24px', textAlign: h === 'Channel' ? 'left' : h === 'Implication' ? 'left' : 'center',
-                    fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
-                    textTransform: 'uppercase', letterSpacing: '0.08em',
+                    ...T.overline, fontSize: 10,
                   }}>{h}</th>
                 ))}
               </tr>
@@ -1421,12 +1427,11 @@ export default function MixOptimizer() {
         </div>
       )}
 
-      {/* Footer Methodology Note */}
-      <div className="flex items-start gap-2 p-4 rounded-xl mt-8" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', width: '100%' }}>
-        <Lightbulb size={16} style={{ color: '#FBBF24', marginTop: 2, flexShrink: 0 }} />
-        <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-          <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Methodology: </span> 
-          This tool analyzes historical channel data to identify diminishing returns. It recommends shifting budget toward the channels projected to deliver the highest incremental revenue. These allocations are predictive estimates designed for planning, not guaranteed outcomes.
+      <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: '16px 24px', display: 'flex', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
+        <Lightbulb size={15} style={{ color: '#FBBF24', marginTop: 1, flexShrink: 0 }} />
+        <p style={{ ...T.helper, fontSize: 12, lineHeight: 1.6 }}>
+          <span style={{ ...T.overline, fontSize: 10, marginRight: 4 }}>Methodology</span>
+          Analyzes historical data to identify diminishing returns. Recommends shifting budget toward channels projected to deliver the highest incremental revenue. Predictive estimates for planning, not guaranteed outcomes.
         </p>
       </div>
     </div>
