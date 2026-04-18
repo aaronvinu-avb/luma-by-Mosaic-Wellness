@@ -39,8 +39,6 @@ function formatLocalDateKey(date: Date): string {
  * Complexity: O(N) where N is the number of records.
  */
 export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
-  const start = performance.now();
-  
   const summariesMap = new Map<string, { spend: number; revenue: number; conversions: number; newCustomers: number }>();
   const monthlyMap: AggregatedState['monthlyMap'] = {};
   const weeklyMap: AggregatedState['weeklyMap'] = {};
@@ -134,9 +132,6 @@ export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
     }
   }
 
-  const end = performance.now();
-  console.log(`[Luma] Aggregated all metrics in ${((end - start)).toFixed(2)}ms`);
-
   return {
     summaries,
     monthlyMap,
@@ -153,6 +148,14 @@ export function getChannelSummaries(data: MarketingRecord[] | AggregatedState): 
   if ('summaries' in data) return data.summaries;
   if (!Array.isArray(data)) return [];
   return getAggregatedState(data).summaries;
+}
+
+/** Portfolio-level ROAS: total revenue ÷ total spend (not naive average of channel ROAS). */
+export function getPortfolioWeightedROAS(summaries: ChannelSummary[]): number {
+  const spend = summaries.reduce((s, x) => s + x.totalSpend, 0);
+  if (spend <= 0) return 0;
+  const rev = summaries.reduce((s, x) => s + x.totalRevenue, 0);
+  return rev / spend;
 }
 
 export function getWeeklyROAS(data: MarketingRecord[] | AggregatedState, channel: string): { week: string; roas: number }[] {
@@ -558,6 +561,170 @@ export interface MonthPoint {
   month: number; // 0..11
 }
 
+/** Fraction of each weekday in a calendar month (Sun=0 … Sat=6). */
+export function getMonthDayDistribution(year: number, month: number): number[] {
+  const counts = Array(7).fill(0);
+  const d = new Date(year, month, 1);
+  while (d.getMonth() === month) {
+    counts[d.getDay()] += 1;
+    d.setDate(d.getDate() + 1);
+  }
+  const total = counts.reduce((s, c) => s + c, 0) || 1;
+  return counts.map((c) => c / total);
+}
+
+/**
+ * For each channel, Σ_month (seasonality_index[month] × day-of-week blend for that calendar month).
+ * Matches the sum of per-month revenue scalers used in buildMonthlyPlanFromData (concave spend term is shared across months).
+ * Used as the optimizer multiplier so KKT allocation aligns with the forecast objective.
+ */
+export function getPeriodTimeWeightSums(
+  data: MarketingRecord[] | AggregatedState,
+  selectedMonths: MonthPoint[],
+): Record<string, number> {
+  const seasonality = getSeasonalityMetrics(data);
+  const dowRows = getDayOfWeekMetrics(data);
+  const result: Record<string, number> = {};
+  CHANNELS.forEach((ch) => {
+    const sea = seasonality.find((s) => s.channel === ch);
+    const dowRow = dowRows.find((d) => d.channel === ch);
+    const dowIndex = dowRow?.dowIndex ?? Array(7).fill(1);
+    let sum = 0;
+    for (const mp of selectedMonths) {
+      const seasonalityMult = sea?.monthlyIndex[mp.month] ?? 1;
+      const monthDistribution = getMonthDayDistribution(mp.year, mp.month);
+      const dowBlend =
+        monthDistribution.reduce((acc, ratio, idx) => acc + ratio * (dowIndex[idx] ?? 1), 0) || 1;
+      sum += seasonalityMult * dowBlend;
+    }
+    result[ch] = selectedMonths.length === 0 ? 1 : sum;
+  });
+  return result;
+}
+
+/** Count months with meaningful spend — used to temper max allocation when history is sparse. */
+export function getChannelMonthlyObservationCounts(
+  data: MarketingRecord[] | AggregatedState,
+): Record<string, number> {
+  const monthly = getMonthlyAggregation(data);
+  const counts: Record<string, number> = {};
+  CHANNELS.forEach((ch) => {
+    let n = 0;
+    for (const monthData of Object.values(monthly)) {
+      const c = monthData[ch];
+      if (c && c.spend > 50) n += 1;
+    }
+    counts[ch] = n;
+  });
+  return counts;
+}
+
+/** Normalize non-negative weights to sum to 1 (Mix Optimizer manual allocation safeguard). */
+export function normalizeAllocationShares(raw: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  let s = 0;
+  CHANNELS.forEach((ch) => {
+    const v = Math.max(0, raw[ch] ?? 0);
+    out[ch] = v;
+    s += v;
+  });
+  if (s <= 0) {
+    CHANNELS.forEach((ch) => (out[ch] = 1 / CHANNELS.length));
+    return out;
+  }
+  CHANNELS.forEach((ch) => (out[ch] = out[ch] / s));
+  return out;
+}
+
+/**
+ * Single source of truth for headline uplift (matches problem statement).
+ */
+export function computeRevenueUpliftMetrics(
+  currentAllocationRevenue: number,
+  optimizedRevenue: number,
+): { revenueOpportunity: number; upliftPct: number; isNearOptimal: boolean } {
+  const revenueOpportunity = optimizedRevenue - currentAllocationRevenue;
+  const upliftPct =
+    currentAllocationRevenue > 0 ? (revenueOpportunity / currentAllocationRevenue) * 100 : 0;
+  const scale = Math.max(Math.abs(currentAllocationRevenue), 1);
+  const isNearOptimal =
+    Math.abs(revenueOpportunity) <= scale * 0.003 && Math.abs(upliftPct) <= 0.35;
+  return { revenueOpportunity, upliftPct, isNearOptimal };
+}
+
+/** Marginal rupee efficiency for the concave model over the full selected period (not per month). */
+export function getPeriodicMarginalROAS(
+  model: SaturationModel,
+  monthlySpend: number,
+  periodTimeWeightSum: number,
+): number {
+  if (monthlySpend <= 0 || periodTimeWeightSum <= 0) return 0;
+  return (model.alpha * periodTimeWeightSum) / (monthlySpend + 1);
+}
+
+export type MixChannelEfficiency = 'under-scaled' | 'over-scaled' | 'efficient' | 'saturated';
+
+export function classifyMixChannelEfficiency(params: {
+  optimalFraction: number;
+  manualFraction: number;
+  model: SaturationModel;
+  cap?: ChannelCapMetrics;
+  portfolioAvgROAS: number;
+  monthlyBudget: number;
+  summaryROAS: number;
+  periodTimeWeightSum: number;
+}): MixChannelEfficiency {
+  const {
+    optimalFraction,
+    manualFraction,
+    model,
+    cap,
+    portfolioAvgROAS,
+    monthlyBudget,
+    summaryROAS,
+    periodTimeWeightSum,
+  } = params;
+  const optSpend = optimalFraction * monthlyBudget;
+  const marg = getPeriodicMarginalROAS(model, optSpend, periodTimeWeightSum);
+  const hasCap = cap && Number.isFinite(cap.capSpend);
+  const nearCap = hasCap && optSpend >= (cap!.capSpend as number) * 0.88;
+  const optPct = optimalFraction * 100;
+  const manPct = manualFraction * 100;
+
+  if (nearCap && (marg < 1.05 || summaryROAS < portfolioAvgROAS * 0.85)) return 'saturated';
+  if (optPct < manPct - 4) return 'over-scaled';
+  if (optPct > manPct + 4 && summaryROAS >= portfolioAvgROAS * 0.85 && marg >= 1) return 'under-scaled';
+  return 'efficient';
+}
+
+function projectOntoSimplexWithVariableBounds(
+  raw: Record<string, number>,
+  lo: number,
+  maxByChannel: Record<string, number>,
+): Record<string, number> {
+  const x: Record<string, number> = {};
+  let s = 0;
+  CHANNELS.forEach((ch) => {
+    x[ch] = Math.max(0, raw[ch] || 0);
+    s += x[ch];
+  });
+  if (s <= 0) {
+    CHANNELS.forEach((ch) => (x[ch] = 1 / CHANNELS.length));
+  } else {
+    CHANNELS.forEach((ch) => (x[ch] /= s));
+  }
+  for (let iter = 0; iter < 48; iter++) {
+    CHANNELS.forEach((ch) => {
+      const hi = maxByChannel[ch] ?? 0.35;
+      x[ch] = Math.min(hi, Math.max(lo, x[ch]));
+    });
+    const tot = CHANNELS.reduce((a, ch) => a + x[ch], 0);
+    if (tot <= 0) break;
+    CHANNELS.forEach((ch) => (x[ch] /= tot));
+  }
+  return x;
+}
+
 export interface MonthlyPlanCell {
   channel: string;
   spend: number;
@@ -659,48 +826,6 @@ export function getBestDaysByChannel(data: MarketingRecord[] | AggregatedState):
   return bestDays;
 }
 
-function getMonthDayDistribution(year: number, month: number): number[] {
-  const counts = Array(7).fill(0);
-  const d = new Date(year, month, 1);
-  while (d.getMonth() === month) {
-    counts[d.getDay()] += 1;
-    d.setDate(d.getDate() + 1);
-  }
-  const total = counts.reduce((s, c) => s + c, 0) || 1;
-  return counts.map((c) => c / total);
-}
-
-function applyCapsAndRedistribute(
-  rawSpend: Record<string, number>,
-  capsByChannel: Record<string, number>,
-): Record<string, number> {
-  const spend = { ...rawSpend };
-  for (let iter = 0; iter < CHANNELS.length + 2; iter++) {
-    let excess = 0;
-    const uncapped: string[] = [];
-    CHANNELS.forEach((ch) => {
-      const cap = capsByChannel[ch];
-      if (Number.isFinite(cap) && spend[ch] > cap) {
-        excess += spend[ch] - cap;
-        spend[ch] = cap;
-      } else {
-        uncapped.push(ch);
-      }
-    });
-    if (excess <= 1 || uncapped.length === 0) break;
-    const uncappedTotal = uncapped.reduce((s, ch) => s + Math.max(0, spend[ch]), 0);
-    if (uncappedTotal <= 0) {
-      const equalAdd = excess / uncapped.length;
-      uncapped.forEach((ch) => { spend[ch] += equalAdd; });
-      break;
-    }
-    uncapped.forEach((ch) => {
-      spend[ch] += excess * ((spend[ch] || 0) / uncappedTotal);
-    });
-  }
-  return spend;
-}
-
 export function buildMonthlyPlanFromData(params: {
   data: MarketingRecord[] | AggregatedState;
   selectedMonths: MonthPoint[];
@@ -714,6 +839,7 @@ export function buildMonthlyPlanFromData(params: {
   const seasonality = getSeasonalityMetrics(data);
   const dow = getDayOfWeekMetrics(data);
   const caps = getChannelCapsFromData(data);
+  const normalizedShares = allocationShares ? normalizeAllocationShares(allocationShares) : undefined;
 
   const baseROAS: Record<string, number> = {};
   CHANNELS.forEach((ch) => {
@@ -744,23 +870,17 @@ export function buildMonthlyPlanFromData(params: {
     const monthDistribution = getMonthDayDistribution(monthPoint.year, monthPoint.month);
     const rawSpendByChannel: Record<string, number> = {};
     CHANNELS.forEach((ch) => {
-      const baseWeight = allocationShares ? Math.max(0, allocationShares[ch] || 0) : Math.max(0.0001, baseROAS[ch]) / roasDenom;
-      const normalizedWeight = allocationShares
-        ? baseWeight / (CHANNELS.reduce((sum, c) => sum + Math.max(0, allocationShares[c] || 0), 0) || 1)
-        : baseWeight;
-      rawSpendByChannel[ch] = monthlyBudget * normalizedWeight;
+      const baseWeight = normalizedShares
+        ? Math.max(0, normalizedShares[ch] || 0)
+        : Math.max(0.0001, baseROAS[ch]) / roasDenom;
+      rawSpendByChannel[ch] = monthlyBudget * baseWeight;
     });
 
-    // Normalize spend to match budget exactly (no seasonality on spend — applied to revenue only)
+    // Normalize spend to match ₹ monthly budget exactly (diminishing returns enter through revenue only).
     const rawTotal = CHANNELS.reduce((s, ch) => s + rawSpendByChannel[ch], 0) || 1;
+    const spendByChannel: Record<string, number> = {};
     CHANNELS.forEach((ch) => {
-      rawSpendByChannel[ch] = (rawSpendByChannel[ch] / rawTotal) * monthlyBudget;
-    });
-
-    const spendByChannel = applyCapsAndRedistribute(rawSpendByChannel, capMap);
-    const totalSpend = CHANNELS.reduce((s, ch) => s + spendByChannel[ch], 0) || 1;
-    CHANNELS.forEach((ch) => {
-      spendByChannel[ch] = (spendByChannel[ch] / totalSpend) * monthlyBudget;
+      spendByChannel[ch] = (rawSpendByChannel[ch] / rawTotal) * monthlyBudget;
     });
 
     const monthLabel = new Date(monthPoint.year, monthPoint.month, 1).toLocaleDateString('en-IN', {
@@ -826,12 +946,11 @@ export function buildMonthlyPlanFromData(params: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Optimal Allocation for a Planning Period (with seasonal weights + max cap)
+// Optimal Allocation for a Planning Period
 //
-// Wraps getOptimalAllocationNonLinear with:
-// 1. Seasonal multipliers averaged over the planning months
-// 2. Per-channel max cap (default 35%) to prevent unrealistic concentration
-// 3. Min floor (1%) so no channel is completely zeroed out
+// • Objective aligned with buildMonthlyPlanFromData: Σ αᵢ ln(xᵢ+1) · Wᵢ where Wᵢ = Σₘ seasonₘ·dow_blendₘ
+// • Concave marginal efficiency via fitted α (not portfolio-average ROAS ranking).
+// • Per-channel max share tightened when monthly history is sparse (data-quality guardrail).
 // ─────────────────────────────────────────────────────────────────────────────
 export function getOptimalSharesForPeriod(params: {
   data: MarketingRecord[] | AggregatedState;
@@ -842,53 +961,26 @@ export function getOptimalSharesForPeriod(params: {
 }): Record<string, number> {
   const { data, selectedMonths, monthlyBudget, maxChannelShare = 0.35, minChannelShare = 0.01 } = params;
   const models = getChannelSaturationModels(data);
-  const seasonality = getSeasonalityMetrics(data);
+  const periodWeights = getPeriodTimeWeightSums(data, selectedMonths);
+  const obsMonths = getChannelMonthlyObservationCounts(data);
 
-  // Compute average seasonal multiplier per channel across planning months
-  const avgSeasonalMult: Record<string, number> = {};
-  CHANNELS.forEach(ch => {
-    const sea = seasonality.find(s => s.channel === ch);
-    if (!sea || selectedMonths.length === 0) { avgSeasonalMult[ch] = 1.0; return; }
-    const sum = selectedMonths.reduce((s, mp) => s + (sea.monthlyIndex[mp.month] ?? 1), 0);
-    avgSeasonalMult[ch] = sum / selectedMonths.length;
+  const multipliers: Record<string, number> = {};
+  CHANNELS.forEach((ch) => {
+    multipliers[ch] = Math.max(1e-6, periodWeights[ch] ?? 1);
   });
 
-  // Get unconstrained optimal allocation using non-linear solver
-  const rawFractions = getOptimalAllocationNonLinear(models, monthlyBudget, new Set(), avgSeasonalMult);
+  const rawFractions = getOptimalAllocationNonLinear(models, monthlyBudget, new Set(), multipliers);
 
-  // Apply max cap and min floor, then renormalize
-  const capped: Record<string, number> = {};
-  let excess = 0;
-  let uncappedTotal = 0;
-  CHANNELS.forEach(ch => {
-    const frac = rawFractions[ch] || 0;
-    if (frac > maxChannelShare) {
-      capped[ch] = maxChannelShare;
-      excess += frac - maxChannelShare;
-    } else if (frac < minChannelShare) {
-      capped[ch] = minChannelShare;
-      excess -= (minChannelShare - frac);
-    } else {
-      capped[ch] = frac;
-      uncappedTotal += frac;
-    }
+  const maxByChannel: Record<string, number> = {};
+  CHANNELS.forEach((ch) => {
+    const n = obsMonths[ch] ?? 0;
+    let hi = maxChannelShare;
+    if (n < 4) hi = Math.min(hi, 0.18);
+    else if (n < 8) hi = Math.min(hi, 0.28);
+    maxByChannel[ch] = hi;
   });
 
-  // Redistribute excess proportionally among uncapped channels
-  if (excess > 0 && uncappedTotal > 0) {
-    CHANNELS.forEach(ch => {
-      const frac = rawFractions[ch] || 0;
-      if (frac <= maxChannelShare && frac >= minChannelShare) {
-        capped[ch] = Math.min(maxChannelShare, capped[ch] + excess * (capped[ch] / uncappedTotal));
-      }
-    });
-  }
-
-  // Final normalization to exactly 100%
-  const sum = CHANNELS.reduce((s, ch) => s + (capped[ch] || 0), 0);
-  const result: Record<string, number> = {};
-  CHANNELS.forEach(ch => { result[ch] = sum > 0 ? (capped[ch] || 0) / sum : 1 / CHANNELS.length; });
-  return result;
+  return projectOntoSimplexWithVariableBounds(rawFractions, minChannelShare, maxByChannel);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getOptimalAllocationNonLinear, getTimeFrameMonths, type SaturationModel } from "@/lib/calculations";
+import {
+  computeRevenueUpliftMetrics,
+  getOptimalAllocationNonLinear,
+  getTimeFrameMonths,
+  normalizeAllocationShares,
+  type SaturationModel,
+} from "@/lib/calculations";
 import type { MarketingRecord } from "@/lib/mockData";
 
 describe("calculations helpers", () => {
@@ -37,5 +43,20 @@ describe("calculations helpers", () => {
 
     const months = getTimeFrameMonths(days);
     expect(months).toBeGreaterThan(1);
+  });
+
+  it("defines revenue opportunity as optimized minus current", () => {
+    const { revenueOpportunity, upliftPct } = computeRevenueUpliftMetrics(1_000_000, 1_050_000);
+    expect(revenueOpportunity).toBe(50_000);
+    expect(upliftPct).toBeCloseTo(5, 5);
+  });
+
+  it("normalizes manual allocation weights to sum to 1", () => {
+    const norm = normalizeAllocationShares({
+      "Meta Ads": 0.3,
+      "Google Search": 0.3,
+    } as Record<string, number>);
+    const sum = Object.values(norm).reduce((a, b) => a + b, 0);
+    expect(sum).toBeCloseTo(1, 6);
   });
 });
