@@ -49,7 +49,7 @@ import { exportToCSV } from '@/lib/exportData';
 
 type PlanningPeriod = '1m' | '1q' | '6m' | '1y' | 'custom';
 type PlanningMode = 'conservative' | 'target' | 'aggressive';
-type EvidenceTab = 'optimizer' | 'why' | 'diminishing' | 'bestdays' | 'seasonal';
+type EvidenceTab = 'why' | 'diminishing' | 'bestdays' | 'seasonal' | 'scenarios';
 
 const BUDGET_SCENARIOS = [
   { label: 'Conservative ₹30L', value: 3000000, color: '#60A5FA' },
@@ -87,7 +87,7 @@ export default function MixOptimizer() {
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [paused, setPaused] = useState<Set<string>>(new Set());
   const [selectedChannel, setSelectedChannel] = useState<string>(CHANNELS[0]);
-  const [evidenceTab, setEvidenceTab] = useState<EvidenceTab>('optimizer');
+  const [evidenceTab, setEvidenceTab] = useState<EvidenceTab>('why');
   const [planningPeriod, setPlanningPeriod] = useState<PlanningPeriod>('1y');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('target');
   const [customStartMonth, setCustomStartMonth] = useState(defaultStartKey);
@@ -99,6 +99,8 @@ export default function MixOptimizer() {
   const [showBudgetScenarios, setShowBudgetScenarios] = useState(false);
   const [showAllRationale, setShowAllRationale] = useState(false);
   const [metricDefinitionsOpen, setMetricDefinitionsOpen] = useState(false);
+  const [activeView, setActiveView] = useState<'current' | 'ai'>('current');
+  const [editMode, setEditMode] = useState(false);
   const safeBudget = Number.isFinite(budget) ? Math.max(0, budget) : 0;
 
   const dataDateRange = useMemo(() => {
@@ -533,6 +535,50 @@ export default function MixOptimizer() {
     return efficiencyBadgeStyles[tier];
   };
 
+  // ── Allocation health score (0–100) ─────────────────────────────────────
+  // 100 = current allocation is identical to optimized; 0 = maximum theoretical gap
+  const allocationHealthScore = (() => {
+    if (currentAllocationRevenue <= 0) return 0;
+    const upliftFraction = revenueOpportunity / currentAllocationRevenue;
+    return Math.round(Math.max(0, Math.min(100, 100 - upliftFraction * 100)));
+  })();
+
+  // ── Largest risk channel (priority: saturated > over-scaled > under-scaled > efficient) ──
+  const largestRiskChannel = (() => {
+    const priority: Record<string, number> = { saturated: 4, 'over-scaled': 3, 'under-scaled': 2, efficient: 1 };
+    let worst = CHANNELS[0];
+    let worstScore = 0;
+    for (const ch of CHANNELS) {
+      const summary = summaryByChannel[ch];
+      const cap = channelCapByName[ch];
+      const model = models.find((m) => m.channel === ch);
+      if (!summary || !model) continue;
+      const tier = classifyMixChannelEfficiency({
+        optimalFraction: optimalFractions[ch] || 0,
+        manualFraction: projectedPlan.channelShares[ch] || 0,
+        model, cap,
+        portfolioAvgROAS: portfolioWeightedROAS,
+        monthlyBudget: safeBudget,
+        summaryROAS: summary.roas,
+        periodTimeWeightSum: periodWeightSums[ch] ?? 1,
+      });
+      if ((priority[tier] || 0) > worstScore) { worst = ch; worstScore = priority[tier] || 0; }
+    }
+    return worst;
+  })();
+
+  // ── Channel diagnosis (over/under weighted vs optimal) ───────────────────
+  const overWeightedChannels = CHANNELS.filter(ch => {
+    const your = (projectedPlan.channelShares[ch] || 0) * 100;
+    const ai   = (optimalFractions[ch] || 0) * 100;
+    return your > ai + 4;
+  });
+  const underWeightedChannels = CHANNELS.filter(ch => {
+    const your = (projectedPlan.channelShares[ch] || 0) * 100;
+    const ai   = (optimalFractions[ch] || 0) * 100;
+    return your < ai - 4;
+  });
+
   if (isLoading) return <DashboardSkeleton />;
 
   // ── DESIGN TOKENS ─────────────────────────────────────────────────────────
@@ -563,11 +609,17 @@ export default function MixOptimizer() {
     backgroundColor: action === 'increase' ? 'rgba(52,211,153,0.1)' : action === 'reduce' ? 'rgba(248,113,113,0.1)' : 'var(--border-subtle)',
   });
 
+  const viewTabStyle = (active: boolean) => ({
+    flex: 1, fontFamily: 'Outfit' as const, fontSize: 13, fontWeight: 700 as const,
+    padding: '10px 20px', borderRadius: 10, cursor: 'pointer' as const, transition: '150ms',
+    border: 'none',
+    backgroundColor: active ? 'var(--text-primary)' : 'transparent',
+    color: active ? 'var(--bg-root)' : 'var(--text-muted)',
+  });
+
   return (
     <div className="mobile-page mix-page space-y-6" style={{ maxWidth: 1320 }}>
-      {/* ═══════════════════════════════════════════════════════════════════════
-          SECTION 1 — HEADER & CONTROLS
-          ═══════════════════════════════════════════════════════════════════════ */}
+      {/* HEADER */}
       <div className="mobile-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1 style={{ fontFamily: 'Outfit', fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em', lineHeight: 1.2, margin: 0 }}>
@@ -715,99 +767,311 @@ export default function MixOptimizer() {
         </div>
       </div>
 
+      {/* VIEW TAB SWITCHER */}
+      <div style={{ display: 'flex', gap: 4, backgroundColor: 'var(--bg-card)', borderRadius: 12, padding: 4, border: CARD_BORDER }}>
+        <button style={viewTabStyle(activeView === 'current')} onClick={() => setActiveView('current')}>
+          Current Allocation
+        </button>
+        <button style={viewTabStyle(activeView === 'ai')} onClick={() => setActiveView('ai')}>
+          AI Recommendation
+        </button>
+      </div>
+
       {/* ═══════════════════════════════════════════════════════════════════════
-          SECTION 2 — OUTCOME CARDS (5 KPIs)
+          VIEW 1 — CURRENT / MANUAL ALLOCATION
           ═══════════════════════════════════════════════════════════════════════ */}
+      {activeView === 'current' && (<>
+
+      {/* KPI STRIP — diagnose current state only */}
+      {/* ── VIEW 1 KPI strip: current-only ── */}
       <div className="mix-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {[
           {
-            label: 'Current allocation revenue',
+            label: 'Current revenue (forecast)',
             value: formatINRCompact(currentAllocationRevenue),
-            foot: 'Forecast for your slider mix — concave model × seasonality × DOW.',
+            foot: 'Modelled revenue for your current allocation — seasonality × DOW.',
             accent: '#60A5FA',
           },
           {
-            label: 'Optimized revenue',
-            value: formatINRCompact(optimizedRevenue),
-            foot: 'Forecast for AI mix — same model; not realized historical revenue.',
-            accent: '#34D399',
-          },
-          {
-            label: 'Revenue opportunity',
-            value: `${revenueOpportunity >= 0 ? '+' : ''}${formatINRCompact(revenueOpportunity)}`,
-            sub: `${upliftPct >= 0 ? '+' : ''}${upliftPct.toFixed(2)}% vs your mix`,
-            foot: 'Optimized minus current allocation (both forecasts).',
-            accent: revenueOpportunity >= 0 ? '#34D399' : '#F87171',
-          },
-          {
-            label: 'Blended ROAS (forecast)',
+            label: 'Blended ROAS',
             value: `${currentAllocationROAS.toFixed(2)}x`,
-            sub: `${optimizedROAS.toFixed(2)}x optimized`,
-            foot: 'Period revenue ÷ period budget — modeled, not raw daily ROAS.',
+            foot: 'Period forecast revenue ÷ period budget. Not raw daily ROAS.',
             accent: '#E8803A',
           },
           {
-            label: 'Active Channels',
+            label: 'Active channels',
             value: `${activeChannels.length} / 10`,
-            foot: 'Channels not paused in manual allocation.',
+            foot: 'Channels currently receiving budget in your mix.',
             accent: '#A78BFA',
           },
+          {
+            label: 'Allocation health',
+            value: `${allocationHealthScore}`,
+            sub: allocationHealthScore >= 85 ? 'Near-optimal' : allocationHealthScore >= 60 ? 'Room to improve' : 'Significant gaps',
+            foot: 'How close your current mix is to the AI-optimized allocation (100 = identical).',
+            accent: allocationHealthScore >= 85 ? '#34D399' : allocationHealthScore >= 60 ? '#FBBF24' : '#F87171',
+          },
+          {
+            label: 'Largest risk channel',
+            value: largestRiskChannel,
+            sub: (() => { const b = getEfficiencyBadge(largestRiskChannel); return b.label; })(),
+            foot: 'Channel classified as highest priority for reallocation review.',
+            accent: getEfficiencyBadge(largestRiskChannel).color,
+          },
         ].map((kpi, idx) => (
-          <div
-            key={kpi.label}
-            className="card-enter"
-            style={{
-              backgroundColor: 'var(--bg-card)',
-              border: CARD_BORDER,
-              borderRadius: CARD_RADIUS,
-              padding: CARD_PADDING,
-              animationDelay: `${idx * 60}ms`,
-            }}
-          >
+          <div key={kpi.label} className="card-enter" style={{
+            backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS,
+            padding: CARD_PADDING, animationDelay: `${idx * 60}ms`,
+          }}>
             <p style={T.overline}>{kpi.label}</p>
-            <p style={{ ...T.value, fontSize: 26, fontWeight: 800, marginTop: 4 }}>
-              {kpi.value}
-            </p>
-            {kpi.sub && (
-              <p style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: kpi.accent, margin: '2px 0 0 0' }}>{kpi.sub}</p>
-            )}
-            {'foot' in kpi && kpi.foot && (
-              <p style={{ ...T.helper, fontSize: 10, marginTop: 8, lineHeight: 1.45, color: 'var(--text-muted)' }}>{kpi.foot}</p>
-            )}
-            <div style={{ height: 2, backgroundColor: kpi.accent, borderRadius: 1, marginTop: kpi.sub ? 8 : 12, opacity: 0.35 }} />
+            <p style={{ ...T.value, fontSize: 24, fontWeight: 800, marginTop: 4 }}>{kpi.value}</p>
+            {kpi.sub && <p style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: kpi.accent, margin: '2px 0 0 0' }}>{kpi.sub}</p>}
+            {'foot' in kpi && kpi.foot && <p style={{ ...T.helper, fontSize: 10, marginTop: 8, lineHeight: 1.45 }}>{kpi.foot}</p>}
+            <div style={{ height: 2, backgroundColor: kpi.accent, borderRadius: 1, marginTop: 12, opacity: 0.35 }} />
           </div>
         ))}
       </div>
 
-      <div style={{ marginTop: 10 }}>
-        <button
-          type="button"
-          onClick={() => setMetricDefinitionsOpen(!metricDefinitionsOpen)}
-          style={{
-            fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600,
-            color: 'var(--text-muted)', background: 'var(--bg-card)', border: CARD_BORDER,
-            borderRadius: 10, padding: '10px 14px', cursor: 'pointer', width: '100%', textAlign: 'left',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-          }}
-        >
-          <span><strong style={{ color: 'var(--text-secondary)' }}>Metric definitions</strong> — historical vs forecast vs uplift</span>
-          {metricDefinitionsOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-        </button>
-        {metricDefinitionsOpen && (
-          <div style={{
-            marginTop: 10, padding: '14px 16px', borderRadius: 10, border: CARD_BORDER,
-            backgroundColor: 'var(--bg-card)', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.65,
-          }}>
-            <p style={{ margin: '0 0 10px 0' }}><strong>Historical mix</strong> — share of spend each channel earned in the loaded dataset (realized).</p>
-            <p style={{ margin: '0 0 10px 0' }}><strong>Your mix</strong> — share implied by sliders (paused channels excluded), normalized to 100%.</p>
-            <p style={{ margin: '0 0 10px 0' }}><strong>AI recommended</strong> — optimizer output under the monthly budget and planning window.</p>
-            <p style={{ margin: '0 0 10px 0' }}><strong>Current vs optimized revenue (KPIs)</strong> — both are <strong>model forecasts</strong> (α·ln(spend+1) with seasonality and day-of-week). When sliders match AI, uplift is ~0 even if AI still differs from <em>historical</em> spend.</p>
-            <p style={{ margin: '0 0 10px 0' }}><strong>AI vs historical spend</strong> — explains AI mix vs <strong>historical</strong> budget share only; not the same comparison as the uplift row.</p>
-            <p style={{ margin: 0 }}><strong>Blended ROAS</strong> — forecast revenue ÷ budget for the selected period; not a simple average of daily channel ROAS from the API.</p>
+      {/* ── VIEW 1 ALLOCATION TABLE (read-only + optional edit mode) ── */}
+      <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, overflow: 'hidden' }}>
+        <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <p style={T.overline}>Channel Allocation</p>
+            <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
+              {editMode ? 'Drag sliders to adjust budget weights — click a row for deeper detail.' : 'Your current budget mix · click a row to expand · toggle Edit to adjust sliders.'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            {editMode && (
+              <button type="button" onClick={resetToCurrent} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 8, backgroundColor: 'var(--bg-root)', color: 'var(--text-muted)', border: CARD_BORDER, cursor: 'pointer' }}>
+                Reset
+              </button>
+            )}
+            <button type="button" onClick={() => setEditMode(!editMode)} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 8, backgroundColor: editMode ? '#34D399' : 'var(--bg-root)', color: editMode ? '#000' : 'var(--text-primary)', border: editMode ? 'none' : CARD_BORDER, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {editMode ? <><CheckCircle size={13} /> Done editing</> : <><Sliders size={13} /> Edit allocation</>}
+            </button>
+          </div>
+        </div>
+        <div style={{ borderBottom: '1px solid var(--border-subtle)', marginTop: 16 }} />
+
+        {/* Table header */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(130px,1.3fr) 44px 52px 80px 80px 54px minmax(70px,0.8fr) 28px',
+          padding: '10px 24px', gap: 8,
+          backgroundColor: 'var(--bg-root)', borderBottom: '1px solid var(--border-subtle)', alignItems: 'center',
+        }}>
+          {['Channel', 'Hist', 'Yours', 'Spend', 'Revenue', 'ROAS', 'Status', ''].map((h) => (
+            <span key={h} style={{ ...T.overline, fontSize: 10, textAlign: h !== 'Channel' && h !== '' ? 'center' : 'left' }}>{h}</span>
+          ))}
+        </div>
+
+        {CHANNELS.map((ch, ci) => {
+          const yourPct = Math.round((projectedPlan.channelShares[ch] || 0) * 100);
+          const histPct = Math.round((currentFractions[ch] || 0) * 100);
+          const badge = getEfficiencyBadge(ch);
+          const color = CHANNEL_COLORS[ci];
+          const isExpanded = expandedRows.has(ch);
+          const cap = channelCapByName[ch];
+          const summary = summaryByChannel[ch];
+          const sea = seasonality.find(s => s.channel === ch);
+          const dow = dowMetrics.find(d => d.channel === ch);
+          const reason = channelReasons[ch];
+          const model = models.find((m) => m.channel === ch);
+          const periodW = periodWeightSums[ch] ?? 1;
+          const monthlySpendUser = durationMonthCount > 0 ? (projectedPlan.channelTotals[ch]?.spend || 0) / durationMonthCount : 0;
+          const periodSpendUser = projectedPlan.channelTotals[ch]?.spend || 0;
+          const revUser = projectedPlan.channelTotals[ch]?.revenue || 0;
+          const marg = model ? getPeriodicMarginalROAS(model, monthlySpendUser, periodW) : 0;
+          const chROAS = periodSpendUser > 0 ? revUser / periodSpendUser : 0;
+          const isPaused = paused.has(ch);
+          const pct = Math.round((alloc[ch] || 0) * 100);
+
+          return (
+            <div key={ch} style={{ borderBottom: '1px solid var(--border-subtle)', opacity: isPaused ? 0.5 : 1, transition: 'opacity 200ms' }}>
+              {/* Summary row */}
+              <button type="button" onClick={() => toggleRowExpand(ch)} style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(130px,1.3fr) 44px 52px 80px 80px 54px minmax(70px,0.8fr) 28px',
+                padding: '12px 24px', gap: 8, alignItems: 'center', cursor: 'pointer',
+                transition: 'background-color 120ms', width: '100%', border: 'none',
+                background: 'transparent', textAlign: 'left',
+              }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--border-subtle)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
+                  <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }} />
+                </div>
+                <span style={{ fontFamily: 'Outfit', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }} title="Historical spend share">{histPct}%</span>
+                <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center' }}>{yourPct}%</span>
+                <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'center' }}>{formatINRCompact(periodSpendUser)}</span>
+                <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, color, textAlign: 'center' }}>{formatINRCompact(revUser)}</span>
+                <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center' }}>{chROAS.toFixed(2)}x</span>
+                <span style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 700, color: badge.color, backgroundColor: badge.bg, padding: '4px 8px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', justifySelf: 'start' }}>
+                  {badge.label}
+                </span>
+                <span style={{ display: 'flex', justifyContent: 'center' }}>
+                  {isExpanded ? <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />}
+                </span>
+              </button>
+
+              {/* Edit mode: slider + pause switch */}
+              {editMode && (
+                <div style={{ padding: '0 24px 14px', display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <Switch checked={!isPaused} onCheckedChange={() => togglePause(ch)} />
+                  <div onClick={(e) => e.stopPropagation()} style={{ flex: 1 }}>
+                    <Slider value={[pct]} min={0} max={60} step={1} onValueChange={(v) => handleSlider(ch, v)} disabled={isPaused} />
+                  </div>
+                  <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', minWidth: 36, textAlign: 'right' }}>{pct}%</span>
+                </div>
+              )}
+
+              {/* Expanded detail */}
+              {isExpanded && (
+                <div style={{ padding: '0 24px 18px 24px', animation: 'card-enter 200ms ease both' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
+                    <div style={{ borderRadius: 10, padding: '12px 14px', border: CARD_BORDER, backgroundColor: 'var(--bg-root)' }}>
+                      <p style={{ ...T.overline, fontSize: 10, marginBottom: 10 }}>Performance</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {[
+                          ['Period spend', formatINRCompact(periodSpendUser)],
+                          ['Period revenue (forecast)', formatINRCompact(revUser)],
+                          ['Channel ROAS (forecast)', `${chROAS.toFixed(2)}x`],
+                          ['Marginal ROAS (period)', `${marg.toFixed(2)}x`],
+                          ['Historical ROAS', summary ? `${summary.roas.toFixed(2)}x` : '—'],
+                        ].map(([label, value]) => (
+                          <div key={label as string} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span style={{ ...T.helper, fontSize: 12 }}>{label}</span>
+                            <span style={{ ...T.value, fontSize: 13 }}>{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ borderRadius: 10, padding: '12px 14px', border: CARD_BORDER, backgroundColor: 'var(--bg-root)' }}>
+                      <p style={{ ...T.overline, fontSize: 10, marginBottom: 10 }}>Timing</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {sea && <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Peak month</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][sea.peakMonth]}</span>
+                        </div>}
+                        {dow && <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Best day</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow.bestDay]}</span>
+                        </div>}
+                        {cap && Number.isFinite(cap.capSpend) && <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                          <span style={{ ...T.helper, fontSize: 12 }}>Saturation cap</span>
+                          <span style={{ ...T.value, fontSize: 13 }}>{formatINRCompact(cap.capSpend)}/mo</span>
+                        </div>}
+                      </div>
+                    </div>
+                    {reason && (
+                      <div style={{ borderRadius: 10, padding: '12px 14px', border: CARD_BORDER, backgroundColor: 'var(--bg-root)', gridColumn: 'span 2' }}>
+                        <p style={{ ...T.overline, fontSize: 10, marginBottom: 8 }}>Diagnosis</p>
+                        <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.55, margin: 0 }}>{reason}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {editMode && (
+          <div style={{ padding: '12px 24px 16px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: Math.abs(totalPct - 1) > 0.01 ? '#F87171' : '#34D399' }}>
+              Total: {Math.round(totalPct * 100)}%
+            </span>
+            <button type="button" onClick={applyOptimal} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 8, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: '#000', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Sparkles size={12} /> Apply AI Mix
+            </button>
           </div>
         )}
       </div>
 
+      {/* ── VIEW 1 DIAGNOSIS BOX + CTA ── */}
+      <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
+        <p style={{ ...T.overline, marginBottom: 14 }}>Current mix diagnosis</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
+          <div style={{ borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(251,191,36,0.3)', backgroundColor: 'rgba(251,191,36,0.05)' }}>
+            <p style={{ ...T.overline, fontSize: 10, color: '#FBBF24', marginBottom: 8 }}>Over-weighted channels</p>
+            {overWeightedChannels.length === 0
+              ? <p style={{ ...T.helper, fontSize: 12 }}>None — all channels are within tolerance.</p>
+              : overWeightedChannels.map(ch => (
+                  <p key={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '0 0 4px 0' }}>
+                    {ch} — {Math.round((projectedPlan.channelShares[ch] || 0) * 100)}% vs {Math.round((optimalFractions[ch] || 0) * 100)}% AI
+                  </p>
+                ))
+            }
+          </div>
+          <div style={{ borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(96,165,250,0.3)', backgroundColor: 'rgba(96,165,250,0.05)' }}>
+            <p style={{ ...T.overline, fontSize: 10, color: '#60A5FA', marginBottom: 8 }}>Under-weighted channels</p>
+            {underWeightedChannels.length === 0
+              ? <p style={{ ...T.helper, fontSize: 12 }}>None — all channels are within tolerance.</p>
+              : underWeightedChannels.map(ch => (
+                  <p key={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '0 0 4px 0' }}>
+                    {ch} — {Math.round((projectedPlan.channelShares[ch] || 0) * 100)}% vs {Math.round((optimalFractions[ch] || 0) * 100)}% AI
+                  </p>
+                ))
+            }
+          </div>
+          <div style={{ borderRadius: 10, padding: '12px 14px', border: CARD_BORDER, backgroundColor: 'var(--bg-root)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 10 }}>
+            <p style={{ ...T.overline, fontSize: 10, marginBottom: 4 }}>Health score</p>
+            <div>
+              <div style={{ height: 6, borderRadius: 3, backgroundColor: 'var(--border-subtle)', overflow: 'hidden', marginBottom: 6 }}>
+                <div style={{ height: '100%', width: `${allocationHealthScore}%`, borderRadius: 3, background: allocationHealthScore >= 85 ? '#34D399' : allocationHealthScore >= 60 ? '#FBBF24' : '#F87171', transition: 'width 600ms ease' }} />
+              </div>
+              <p style={{ fontFamily: 'Outfit', fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>{allocationHealthScore}/100</p>
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => setActiveView('ai')}
+          style={{ width: '100%', padding: '14px 20px', borderRadius: 10, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: '#000', fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+        >
+          <Sparkles size={15} /> View AI Recommendation <ArrowUpRight size={15} />
+        </button>
+      </div>
+
+      </>) /* end View 1 */}
+
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          VIEW 2 — AI RECOMMENDATION
+          ═══════════════════════════════════════════════════════════════════════ */}
+      {activeView === 'ai' && (<>
+
+      {/* ── VIEW 2 KPI strip: current vs recommended ── */}
+      <div className="mix-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+        {[
+          { label: 'Current revenue', value: formatINRCompact(currentAllocationRevenue), foot: 'Forecast for your current slider mix.', accent: '#60A5FA' },
+          { label: 'Recommended revenue', value: formatINRCompact(optimizedRevenue), foot: 'Forecast for AI-recommended mix — same model.', accent: '#34D399' },
+          {
+            label: 'Revenue opportunity',
+            value: `${revenueOpportunity >= 0 ? '+' : ''}${formatINRCompact(revenueOpportunity)}`,
+            sub: `${upliftPct >= 0 ? '+' : ''}${upliftPct.toFixed(2)}% uplift`,
+            foot: 'Recommended minus current (both modelled forecasts).',
+            accent: revenueOpportunity >= 0 ? '#34D399' : '#F87171',
+          },
+          { label: 'Current ROAS', value: `${currentAllocationROAS.toFixed(2)}x`, foot: 'Period revenue ÷ budget for your mix.', accent: '#E8803A' },
+          { label: 'Recommended ROAS', value: `${optimizedROAS.toFixed(2)}x`, foot: 'Period revenue ÷ budget for AI mix.', accent: '#FBBF24' },
+        ].map((kpi, idx) => (
+          <div key={kpi.label} className="card-enter" style={{
+            backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS,
+            padding: CARD_PADDING, animationDelay: `${idx * 60}ms`,
+          }}>
+            <p style={T.overline}>{kpi.label}</p>
+            <p style={{ ...T.value, fontSize: 24, fontWeight: 800, marginTop: 4 }}>{kpi.value}</p>
+            {kpi.sub && <p style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: kpi.accent, margin: '2px 0 0 0' }}>{kpi.sub}</p>}
+            <p style={{ ...T.helper, fontSize: 10, marginTop: 8, lineHeight: 1.45 }}>{kpi.foot}</p>
+            <div style={{ height: 2, backgroundColor: kpi.accent, borderRadius: 1, marginTop: 12, opacity: 0.35 }} />
+          </div>
+        ))}
+      </div>
+
+      {/* ── VIEW 2 OPPORTUNITY / NEAR-OPTIMAL BANNER ── */}
       {/* ═══════════════════════════════════════════════════════════════════════
           SECTION 3 — OPPORTUNITY BANNER
           ═══════════════════════════════════════════════════════════════════════ */}
@@ -892,6 +1156,36 @@ export default function MixOptimizer() {
         </div>
       )}
 
+      {/* ── VIEW 2 TOP CHANGES SUMMARY ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {[
+          { title: 'Top increases', channels: CHANNELS.filter(ch => (optimalFractions[ch] || 0) - (projectedPlan.channelShares[ch] || 0) >= 0.04).sort((a, b) => ((optimalFractions[b] || 0) - (projectedPlan.channelShares[b] || 0)) - ((optimalFractions[a] || 0) - (projectedPlan.channelShares[a] || 0))).slice(0, 3), color: '#34D399', bgColor: 'rgba(52,211,153,0.07)', borderColor: 'rgba(52,211,153,0.25)', Icon: TrendingUp },
+          { title: 'Top reductions', channels: CHANNELS.filter(ch => (projectedPlan.channelShares[ch] || 0) - (optimalFractions[ch] || 0) >= 0.04).sort((a, b) => ((projectedPlan.channelShares[b] || 0) - (optimalFractions[b] || 0)) - ((projectedPlan.channelShares[a] || 0) - (optimalFractions[a] || 0))).slice(0, 3), color: '#F87171', bgColor: 'rgba(248,113,113,0.07)', borderColor: 'rgba(248,113,113,0.25)', Icon: TrendingDown },
+        ].map(({ title, channels, color, bgColor, borderColor, Icon }) => (
+            <div key={title} style={{ borderRadius: CARD_RADIUS, border: `1px solid ${borderColor}`, padding: CARD_PADDING, backgroundColor: bgColor }}>
+            <p style={{ ...T.overline, color, marginBottom: 12 }}>{title}</p>
+            {channels.length === 0 ? (
+              <p style={{ ...T.helper, fontSize: 12 }}>No channels meet the threshold for this category.</p>
+            ) : channels.map((ch, i) => {
+              const yourPct = Math.round((projectedPlan.channelShares[ch] || 0) * 100);
+              const aiPct = Math.round((optimalFractions[ch] || 0) * 100);
+              const delta = aiPct - yourPct;
+              return (
+                <div key={ch} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: i < channels.length - 1 ? 10 : 0 }}>
+                  <Icon size={14} color={color} style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{ch}</span>
+                    <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, color, marginLeft: 8 }}>{delta > 0 ? '+' : ''}{delta}%</span>
+                  </div>
+                  <span style={{ fontFamily: 'Outfit', fontSize: 12, color: 'var(--text-muted)' }}>{yourPct}% → {aiPct}%</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* ── VIEW 2 CHANNEL COMPARISON TABLE ── */}
       {/* ═══════════════════════════════════════════════════════════════════════
           SECTION 4 — ALLOCATION COMPARISON TABLE
           ═══════════════════════════════════════════════════════════════════════ */}
@@ -904,9 +1198,9 @@ export default function MixOptimizer() {
         <div style={{ padding: '20px 24px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <p style={T.overline}>Channel Allocation</p>
+              <p style={T.overline}>Channel-by-channel comparison</p>
               <p style={{ ...T.helper, fontSize: 12, marginTop: 4 }}>
-                Columns: historical share from data, your slider mix, AI optimizer — tap a row for detail; sliders live in Manual Allocation below.
+                Hist = historical spend mix · Yours = your sliders · AI = optimizer — tap a row for rationale and detail.
               </p>
             </div>
             <button onClick={applyOptimal} style={{
@@ -1227,12 +1521,9 @@ export default function MixOptimizer() {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          SECTION 6 — EVIDENCE TABS
+          SECTION 6 — EVIDENCE TABS (Why It Works | Diminishing | Best Days | Seasonal | Scenarios)
           ═══════════════════════════════════════════════════════════════════════ */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button style={evidenceTabStyle(evidenceTab === 'optimizer')} onClick={() => setEvidenceTab('optimizer')}>
-          <Sliders size={13} /> Optimizer
-        </button>
         <button style={evidenceTabStyle(evidenceTab === 'why')} onClick={() => setEvidenceTab('why')}>
           <Info size={13} /> Why It Works
         </button>
@@ -1245,187 +1536,112 @@ export default function MixOptimizer() {
         <button style={evidenceTabStyle(evidenceTab === 'seasonal')} onClick={() => setEvidenceTab('seasonal')}>
           <Calendar size={13} /> Seasonal Peaks
         </button>
+        <button style={evidenceTabStyle(evidenceTab === 'scenarios')} onClick={() => setEvidenceTab('scenarios')}>
+          <BarChart3 size={13} /> Budget Scenarios
+        </button>
       </div>
 
-      {/* ── OPTIMIZER TAB (progressive disclosure on sliders + secondary charts) ── */}
-      {evidenceTab === 'optimizer' && (
-        <div className="mix-optimizer-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+      {/* ── Allocation comparison chart (shown in Why It Works tab or always) ── */}
+      {evidenceTab === 'why' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
-              <div>
-                <p style={T.overline}>Manual Allocation</p>
-                <p style={{ ...T.helper, fontSize: 11, marginTop: 4 }}>Adjust weights — expand a row for spend and revenue detail</p>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" onClick={resetToCurrent} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 8, backgroundColor: 'var(--bg-root)', color: 'var(--text-muted)', border: CARD_BORDER, cursor: 'pointer' }}>Reset</button>
-                <button type="button" onClick={applyOptimal} style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, background: 'linear-gradient(135deg, #E8803A, #FBBF24)', color: 'var(--bg-root)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  AI Mix <Sparkles size={12} />
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {CHANNELS.map((ch, ci) => {
-                const pct = Math.round((alloc[ch] || 0) * 100);
-                const monthlyAmt = (effectiveAlloc[ch] || 0) * safeBudget;
-                const periodAmt = monthlyAmt * durationMonthCount;
-                const projRev = projectedPlan.channelTotals[ch]?.revenue || 0;
-                const optPct = Math.round((optimalFractions[ch] || 0) * 100);
-                const isPaused = paused.has(ch);
-                const color = CHANNEL_COLORS[ci];
-                const delta = optPct - pct;
-                const manualOpen = expandedManualRows.has(ch);
-
-                return (
-                  <div key={ch} style={{ opacity: isPaused ? 0.4 : 1, border: '1px solid var(--border-strong)', borderRadius: 12, padding: '10px 12px', backgroundColor: 'var(--bg-root)', transition: 'opacity 200ms' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
-                        <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }} />
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 36, textAlign: 'right' }}>{pct}%</span>
-                        <Switch checked={!isPaused} onCheckedChange={() => togglePause(ch)} />
-                        <button
-                          type="button"
-                          onClick={() => toggleManualRowExpand(ch)}
-                          aria-expanded={manualOpen}
-                          aria-label={manualOpen ? 'Hide channel detail' : 'Show channel detail'}
-                          style={{
-                            border: 'none', background: 'var(--border-subtle)', borderRadius: 8, padding: '6px',
-                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}
-                        >
-                          {manualOpen ? <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />}
-                        </button>
-                      </div>
+            <p style={{ ...T.overline, marginBottom: 4 }}>How the optimizer works</p>
+            <p style={{ ...T.helper, fontSize: 12, marginBottom: 24 }}>Four steps from raw data to recommendation</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+              {[
+                { step: '01', title: 'Analyze historical efficiency', desc: 'Calculate ROAS for each channel across 3 years of daily data to establish baseline performance.', icon: BarChart3, color: '#60A5FA' },
+                { step: '02', title: 'Detect saturation & diminishing returns', desc: 'Group spend into low/mid/high buckets. Identify channels where higher spend yields lower returns.', icon: TrendingDown, color: '#F87171' },
+                { step: '03', title: 'Adjust for day & season patterns', desc: 'Each month applies channel-specific calendar seasonality and a day-of-week blend derived from historical ROAS indices.', icon: Calendar, color: '#FBBF24' },
+                { step: '04', title: 'Reallocate toward highest marginal return', desc: 'Non-linear KKT allocation on fitted α with per-channel bounds; sparse channels get a tighter max share.', icon: Zap, color: '#34D399' },
+              ].map((item, i) => (
+                <div key={i} className="card-enter" style={{ backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '18px 16px', animationDelay: `${i * 80}ms` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: `${item.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <item.icon size={15} style={{ color: item.color }} />
                     </div>
-                    <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 8 }}>
-                      <Slider value={[pct]} min={0} max={60} step={1} onValueChange={(v) => handleSlider(ch, v)} disabled={isPaused} />
-                    </div>
-                    {manualOpen && !isPaused && (
-                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-subtle)' }}>
-                        {delta !== 0 && (
-                          <p style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 600, color: delta > 0 ? '#34D399' : '#F87171', margin: '0 0 8px 0' }}>
-                            vs AI recommendation: {delta > 0 ? '+' : ''}{delta}%
-                          </p>
-                        )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>{formatINRCompact(periodAmt)} period spend</span>
-                          <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color }}>
-                            {formatINRCompact(projRev)} projected revenue · {periodAmt > 0 ? (projRev / periodAmt).toFixed(2) : '0.00'}x
-                          </span>
-                        </div>
-                      </div>
-                    )}
+                    <span style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: item.color }}>{item.step}</span>
                   </div>
+                  <h3 style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>{item.title}</h3>
+                  <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>{item.desc}</p>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 10, backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-subtle)' }}>
+              <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+                <strong style={{ color: 'var(--text-secondary)' }}>Note: </strong>
+                Forecast revenue multiplies the concave spend response by seasonality × day-of-week for each calendar month. Predictive estimates only — not guaranteed outcomes.
+              </p>
+            </div>
+          </div>
+          <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
+            <p style={T.overline}>Allocation comparison chart</p>
+            <p style={{ ...T.helper, fontSize: 12, marginTop: 8, marginBottom: 16, lineHeight: 1.5 }}>
+              {allocationDeltaLeaders.length > 0
+                ? <>Largest gaps vs AI: <strong style={{ color: 'var(--text-secondary)' }}>{allocationDeltaLeaders.map((x) => x.ch).join(', ')}</strong>.</>
+                : 'Your mix is already close to the AI split across all channels.'}
+            </p>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={comparisonData} barCategoryGap="30%">
+                <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
+                <XAxis dataKey="channel" tick={{ fontSize: 8, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} angle={-35} textAnchor="end" height={56} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} unit="%" />
+                <Tooltip {...tooltipStyle} formatter={(v: number, name: string) => [`${v.toFixed(1)}%`, name]} />
+                <Legend wrapperStyle={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }} />
+                <Bar dataKey="historical" fill="rgba(148,163,184,0.65)" name="Historical" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="current" fill="rgba(96,165,250,0.6)" name="Your mix" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="optimal" fill="rgba(232,128,58,0.85)" name="AI mix" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* ── Budget Scenarios tab ── */}
+      {evidenceTab === 'scenarios' && (
+        <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, overflow: 'hidden' }}>
+          <div style={{ padding: CARD_PADDING }}>
+            <p style={T.overline}>Budget scenarios</p>
+            <p style={{ ...T.helper, fontSize: 12, marginTop: 8 }}>
+              At <strong style={{ color: 'var(--text-secondary)' }}>{formatINRCompact(BUDGET_SCENARIOS[1].value)}</strong>/mo (current tier), optimized portfolio revenue ≈{' '}
+              <strong style={{ color: 'var(--text-secondary)' }}>{formatINRCompact(scenarioResults[1]?.revenue ?? 0)}</strong> over {durationLabel}.
+            </p>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ backgroundColor: 'var(--bg-root)' }}>
+                {[scenarioBudgetLabel, 'Proj. Revenue', 'ROAS', `vs ${formatINRCompact((BUDGET_SCENARIOS[1]?.value ?? 0) * durationMonthCount)}`].map((h) => (
+                  <th key={h} style={{ padding: '10px 16px', textAlign: 'left', ...T.overline, fontSize: 10, borderBottom: '1px solid var(--border-subtle)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {BUDGET_SCENARIOS.map((s, i) => {
+                const sr = scenarioResults[i] || { revenue: 0, roas: 0 };
+                const baseline = scenarioResults[1]?.revenue || 0;
+                const diff = sr.revenue - baseline;
+                return (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--border-subtle)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}>
+                    <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINRCompact(s.value * durationMonthCount)}</td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{formatINRCompact(sr.revenue)}</td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: sr.roas >= 4 ? '#34D399' : sr.roas >= 2 ? '#FBBF24' : '#F87171' }}>{sr.roas.toFixed(2)}x</td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: diff >= 0 ? '#34D399' : '#F87171' }}>
+                      {diff >= 0 ? '+' : ''}{formatINRCompact(Math.abs(diff))}
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
-
-            <div style={{ textAlign: 'center', padding: '10px 0', borderRadius: 10, marginTop: 12, backgroundColor: Math.abs(totalPct - 1) > 0.01 ? 'rgba(248,113,113,0.1)' : 'rgba(52,211,153,0.1)', color: Math.abs(totalPct - 1) > 0.01 ? '#F87171' : '#34D399', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600 }}>
-              Total: {Math.round(totalPct * 100)}%
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: CARD_PADDING }}>
-              <p style={T.overline}>Allocation comparison</p>
-              <p style={{ ...T.helper, fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>
-                {allocationDeltaLeaders.length > 0
-                  ? <>Largest absolute gaps vs AI: <strong style={{ color: 'var(--text-secondary)' }}>{allocationDeltaLeaders.map((x) => x.ch).join(', ')}</strong>.</>
-                  : 'Your mix is already close to the AI split across channels.'}
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowComparisonChart(!showComparisonChart)}
-                style={{
-                  marginTop: 12, fontFamily: 'Outfit', fontSize: 12, fontWeight: 600,
-                  padding: '8px 14px', borderRadius: 8, border: CARD_BORDER, background: 'var(--bg-root)',
-                  color: 'var(--text-primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
-                }}
-              >
-                {showComparisonChart ? 'Hide chart' : 'View allocation comparison'}
-                {showComparisonChart ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </button>
-              {showComparisonChart && (
-                <div style={{ marginTop: 16 }}>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={comparisonData} barCategoryGap="30%">
-                      <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
-                      <XAxis dataKey="channel" tick={{ fontSize: 8, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} angle={-35} textAnchor="end" height={56} />
-                      <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} unit="%" />
-                      <Tooltip {...tooltipStyle} formatter={(v: number, name: string) => [`${v.toFixed(1)}%`, name]} />
-                      <Legend wrapperStyle={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }} />
-                      <Bar dataKey="historical" fill="rgba(148,163,184,0.65)" name="Historical" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="current" fill="rgba(96,165,250,0.6)" name="Your mix" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="optimal" fill="rgba(232,128,58,0.85)" name="AI mix" radius={[3, 3, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </div>
-
-            <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, overflow: 'hidden' }}>
-              <div style={{ padding: CARD_PADDING }}>
-                <p style={T.overline}>Budget scenarios</p>
-                <p style={{ ...T.helper, fontSize: 12, marginTop: 8 }}>
-                  At <strong style={{ color: 'var(--text-secondary)' }}>{formatINRCompact(BUDGET_SCENARIOS[1].value)}</strong>/mo (current tier), optimized portfolio revenue ≈{' '}
-                  <strong style={{ color: 'var(--text-secondary)' }}>{formatINRCompact(scenarioResults[1]?.revenue ?? 0)}</strong> over {durationLabel}.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowBudgetScenarios(!showBudgetScenarios)}
-                  style={{
-                    marginTop: 12, fontFamily: 'Outfit', fontSize: 12, fontWeight: 600,
-                    padding: '8px 14px', borderRadius: 8, border: CARD_BORDER, background: 'var(--bg-root)',
-                    color: 'var(--text-primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
-                  }}
-                >
-                  {showBudgetScenarios ? 'Hide scenario table' : 'View budget scenarios'}
-                  {showBudgetScenarios ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </button>
-              </div>
-              {showBudgetScenarios && (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: 'var(--bg-card)' }}>
-                      {[scenarioBudgetLabel, 'Proj. Revenue', 'ROAS', `vs ${formatINRCompact(BUDGET_SCENARIOS[1].value * durationMonthCount)}`].map((h) => (
-                        <th key={h} style={{ padding: '10px 16px', textAlign: 'left', ...T.overline, fontSize: 10 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {BUDGET_SCENARIOS.map((s, i) => {
-                      const sr = scenarioResults[i] || { revenue: 0, roas: 0 };
-                      const baseline = scenarioResults[1]?.revenue || 0;
-                      const diff = sr.revenue - baseline;
-                      return (
-                        <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--border-subtle)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}>
-                          <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINRCompact(s.value * durationMonthCount)}</td>
-                          <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{formatINRCompact(sr.revenue)}</td>
-                          <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 13, fontWeight: 600, color: sr.roas >= 4 ? '#34D399' : sr.roas >= 2 ? '#FBBF24' : '#F87171' }}>{sr.roas.toFixed(2)}x</td>
-                          <td style={{ padding: '12px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: diff >= 0 ? '#34D399' : '#F87171' }}>
-                            {diff >= 0 ? '+' : ''}{formatINRCompact(Math.abs(diff))}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-              {showBudgetScenarios && scenarioIncrementalNote && (
-                <p style={{ ...T.helper, fontSize: 11, lineHeight: 1.5, margin: 0, padding: '12px 16px 18px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-root)' }}>
-                  <strong style={{ color: 'var(--text-secondary)' }}>Marginal ROAS (forecast)</strong> between tiers — extra revenue per extra rupee of period budget:
-                  {' '}{scenarioIncrementalNote.labels.low}: <strong>{scenarioIncrementalNote.mLow.toFixed(2)}x</strong>;
-                  {' '}{scenarioIncrementalNote.labels.high}: <strong>{scenarioIncrementalNote.mHigh.toFixed(2)}x</strong>
-                  {' '}(+{formatINRCompact(scenarioIncrementalNote.deltaRevUpper)} revenue on +{formatINRCompact(scenarioIncrementalNote.extraBudgetUpper)} budget vs mid tier).
-                </p>
-              )}
-            </div>
-          </div>
+            </tbody>
+          </table>
+          {scenarioIncrementalNote && (
+            <p style={{ ...T.helper, fontSize: 11, lineHeight: 1.5, margin: 0, padding: '12px 16px 18px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-root)' }}>
+              <strong style={{ color: 'var(--text-secondary)' }}>Marginal ROAS (forecast)</strong> between tiers:
+              {' '}{scenarioIncrementalNote.labels.low}: <strong>{scenarioIncrementalNote.mLow.toFixed(2)}x</strong>;
+              {' '}{scenarioIncrementalNote.labels.high}: <strong>{scenarioIncrementalNote.mHigh.toFixed(2)}x</strong>
+              {' '}(+{formatINRCompact(scenarioIncrementalNote.deltaRevUpper)} on +{formatINRCompact(scenarioIncrementalNote.extraBudgetUpper)} vs mid tier).
+            </p>
+          )}
         </div>
       )}
 
@@ -1664,11 +1880,37 @@ export default function MixOptimizer() {
         </div>
       )}
 
-      <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: '16px 24px', display: 'flex', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
+      {/* ── METRIC DEFINITIONS ── */}
+      <div>
+        <button type="button" onClick={() => setMetricDefinitionsOpen(!metricDefinitionsOpen)} style={{
+          fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 600,
+          color: 'var(--text-muted)', background: 'var(--bg-card)', border: CARD_BORDER,
+          borderRadius: 10, padding: '10px 14px', cursor: 'pointer', width: '100%', textAlign: 'left',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <span><strong style={{ color: 'var(--text-secondary)' }}>Metric definitions</strong> — historical vs forecast vs uplift</span>
+          {metricDefinitionsOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {metricDefinitionsOpen && (
+          <div style={{ marginTop: 8, padding: '14px 16px', borderRadius: 10, border: CARD_BORDER, backgroundColor: 'var(--bg-card)', fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.65 }}>
+            <p style={{ margin: '0 0 10px 0' }}><strong>Historical mix</strong> — share of spend each channel earned in the loaded dataset (realized).</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>Your mix</strong> — share implied by your allocation (paused channels excluded), normalized to 100%.</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>AI recommended</strong> — optimizer output under the monthly budget and planning window.</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>Current vs recommended revenue</strong> — both are <strong>model forecasts</strong> (α·ln(spend+1) × seasonality × DOW). When your mix matches AI, uplift is ~0 even if AI still differs from historical spend.</p>
+            <p style={{ margin: '0 0 10px 0' }}><strong>AI vs historical</strong> — why AI diverges from historical budget share; a separate comparison from the uplift row.</p>
+            <p style={{ margin: 0 }}><strong>Blended ROAS</strong> — forecast revenue ÷ budget for the selected period; not a simple average of daily channel ROAS from the API.</p>
+          </div>
+        )}
+      </div>
+
+      </>) /* end View 2 */}
+
+      {/* FOOTER (shown in both views) */}
+      <div style={{ backgroundColor: 'var(--bg-card)', border: CARD_BORDER, borderRadius: CARD_RADIUS, padding: '16px 24px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <Lightbulb size={15} style={{ color: '#FBBF24', marginTop: 1, flexShrink: 0 }} />
         <p style={{ ...T.helper, fontSize: 12, lineHeight: 1.6 }}>
           <span style={{ ...T.overline, fontSize: 10, marginRight: 4 }}>Methodology</span>
-          Analyzes historical data to identify diminishing returns. Recommends shifting budget toward channels projected to deliver the highest incremental revenue. Predictive estimates for planning, not guaranteed outcomes.
+          Analyzes 3 years of daily data to identify diminishing returns. Recommends shifting budget toward channels projected to deliver the highest incremental revenue. Predictive estimates for planning only — not guaranteed outcomes.
         </p>
       </div>
     </div>
