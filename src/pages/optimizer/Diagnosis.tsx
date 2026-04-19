@@ -327,7 +327,7 @@ export default function Diagnosis() {
                           {d && [
                             { k: 'Current allocation', v: `${(row?.allocationPct || 0).toFixed(1)}%` },
                             { k: 'Historical baseline', v: `${histPct}%` },
-                            { k: 'Delta', v: `${d.deltaPct >= 0 ? '+' : ''}${d.deltaPct.toFixed(0)}pp` },
+                            { k: 'Delta', v: `${d.deltaPct >= 0 ? '+' : ''}${d.deltaPct.toFixed(0)}%` },
                             { k: 'Current spend', v: formatINRCompact(d.currentSpend) },
                             {
                               k: 'Efficient range',
@@ -437,7 +437,7 @@ export default function Diagnosis() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }} />
                       <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: '#FBBF24' }}>
-                        +{Math.abs(d?.deltaPct || 0).toFixed(0)}pp vs hist.
+                        +{Math.abs(d?.deltaPct || 0).toFixed(0)}% vs hist.
                       </span>
                     </div>
                     <p style={{ ...T.body, fontSize: 11, marginTop: 3, lineHeight: 1.4 }}>
@@ -473,7 +473,7 @@ export default function Diagnosis() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }} />
                       <span style={{ fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: '#60A5FA' }}>
-                        {(d?.deltaPct || 0).toFixed(0)}pp vs hist.
+                        {(d?.deltaPct || 0).toFixed(0)}% vs hist.
                       </span>
                     </div>
                     <p style={{ ...T.body, fontSize: 11, marginTop: 3, lineHeight: 1.4 }}>

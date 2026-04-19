@@ -563,7 +563,7 @@ export default function CurrentMix() {
                   ) : (
                     <>
                       <span style={{ ...T.body, fontSize: 11, color: committedColor }}>
-                        {committedDelta > 0 ? `${committedDelta}pp unassigned` : `${Math.abs(committedDelta)}pp over`}
+                        {committedDelta > 0 ? `${committedDelta}% unassigned` : `${Math.abs(committedDelta)}% over`}
                       </span>
                       <button
                         onClick={() => setAllocations(
@@ -648,7 +648,7 @@ export default function CurrentMix() {
                           fontFamily: 'Outfit', fontSize: 11, fontWeight: 700,
                           color: dDelta > 0 ? '#34D399' : '#F87171',
                         }}>
-                          {dDelta > 0 ? '+' : ''}{dDelta}pp
+                          {dDelta > 0 ? '+' : ''}{dDelta}%
                         </span>
                       )}
                     </div>
@@ -792,7 +792,7 @@ export default function CurrentMix() {
                   {!pendingOk && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                       <span style={{ ...T.body, fontSize: 11, color: drawerBarColor }}>
-                        {pendingRemaining > 0 ? `${pendingRemaining}pp unassigned` : `${Math.abs(pendingRemaining)}pp over`}
+                        {pendingRemaining > 0 ? `${pendingRemaining}% unassigned` : `${Math.abs(pendingRemaining)}% over`}
                       </span>
                       <button
                         onClick={normalizeAllocs}

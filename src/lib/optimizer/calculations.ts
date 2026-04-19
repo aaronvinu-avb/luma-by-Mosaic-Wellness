@@ -387,9 +387,22 @@ export function classifyChannelHealth(
   else if (currentSpend < lowerEfficientSpend) status = 'under-scaled';
   else status = 'efficient';
 
-  // Override rules from spec
-  if (baseline.historicalROAS < 1.5 && allocationPct > 10) status = 'over-scaled';
-  if (baseline.historicalROAS > 10 && allocationPct < 8) status = 'under-scaled';
+  // Portfolio-relative overrides (order matters)
+  // 1) High historical efficiency vs portfolio but starved budget share → under-invested
+  if (
+    portfolioBlendedROAS > 0 &&
+    baseline.historicalROAS > 1.5 * portfolioBlendedROAS &&
+    allocationPct < 5
+  ) {
+    status = 'under-scaled';
+  } else if (baseline.historicalROAS < 1.8) {
+    // 2) Weak historical ROAS → saturated (near breakeven; do not label as over-weighted)
+    status = 'saturated';
+  } else if (baseline.historicalROAS < 1.5 && allocationPct > 10) {
+    status = 'over-scaled';
+  } else if (baseline.historicalROAS > 10 && allocationPct < 8) {
+    status = 'under-scaled';
+  }
 
   return {
     status,
@@ -549,6 +562,10 @@ export function computeRecommendedMix(
   const activeChannels = baselines.filter(b => b.activeMonths > 0).map(b => b.channel);
   const explorationFactor = mode === 'conservative' ? 0.3 : mode === 'aggressive' ? 1.0 : 0.6;
 
+  const totalHistSpend = baselines.reduce((s, b) => s + b.totalSpend, 0);
+  const totalHistRev = baselines.reduce((s, b) => s + b.totalRevenue, 0);
+  const portfolioHistoricalROAS = totalHistSpend > 0 ? totalHistRev / totalHistSpend : 0;
+
   const efficiencyScore: Record<string, number> = {};
   const weightedEfficiency: Record<string, number> = {};
   for (const ch of CHANNELS) {
@@ -563,7 +580,16 @@ export function computeRecommendedMix(
     const marginal = curveMarginalROAS(baseline.curve, Math.max(currentSpend, 1)) * timingModifier;
     const confidence = 1 / (1 + Math.max(0, baseline.monthlyROASCV));
     efficiencyScore[ch] = marginal;
-    weightedEfficiency[ch] = marginal * confidence;
+    let weighted = marginal * confidence;
+    // Strong historical efficiency vs portfolio but current share &lt; 5% → prioritize reallocation (e.g. Email)
+    if (
+      portfolioHistoricalROAS > 0 &&
+      baseline.historicalROAS > 1.5 * portfolioHistoricalROAS &&
+      currentAllocationPct[ch] < 5
+    ) {
+      weighted *= 1.85;
+    }
+    weightedEfficiency[ch] = weighted;
   }
 
   const weightedSum = CHANNELS.reduce((s, ch) => s + weightedEfficiency[ch], 0);

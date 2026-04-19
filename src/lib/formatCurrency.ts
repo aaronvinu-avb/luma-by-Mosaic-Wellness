@@ -15,13 +15,20 @@ export function formatINR(value: number): string {
   return `${value < 0 ? '-' : ''}₹${result}`;
 }
 
+/**
+ * Compact INR for dashboards (spend, revenue, budget).
+ * - ≥ ₹1Cr → ₹X.XXCr
+ * - ≥ ₹1L → ₹XL (whole lakhs)
+ * - ≥ ₹1K → ₹XXK (whole thousands, no decimal)
+ * - &lt; ₹1K → full grouped amount via `formatINR`
+ */
 export function formatINRCompact(value: number): string {
   if (!isFinite(value) || isNaN(value)) return '—';
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);
-  if (abs >= 1_00_00_000) return `${sign}₹${(abs / 1_00_00_000).toFixed(2)}Cr`;
-  if (abs >= 1_00_000) return `${sign}₹${Math.round(abs / 1_00_000)}L`;
-  if (abs >= 1_000) return `${sign}₹${(abs / 1_000).toFixed(1)}K`;
+  if (abs >= 10_000_000) return `${sign}₹${(abs / 10_000_000).toFixed(2)}Cr`;
+  if (abs >= 100_000) return `${sign}₹${Math.round(abs / 100_000)}L`;
+  if (abs >= 1_000) return `${sign}₹${Math.round(abs / 1_000)}K`;
   return formatINR(value);
 }
 

@@ -263,7 +263,7 @@ export default function RecommendedMix() {
                     <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
                     <ChannelName channel={r.channel} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }} />
                     <span style={{ ...T.num, fontSize: 12, fontWeight: 700, color: '#34D399' }}>
-                      +{r.deltaPct.toFixed(1)}pp
+                      +{r.deltaPct.toFixed(1)}%
                     </span>
                   </div>
                   <p style={{ ...T.body, fontSize: 11, lineHeight: 1.45, marginLeft: 15 }}>
@@ -290,7 +290,7 @@ export default function RecommendedMix() {
                     <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
                     <ChannelName channel={r.channel} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }} />
                     <span style={{ ...T.num, fontSize: 12, fontWeight: 700, color: '#F87171' }}>
-                      {r.deltaPct.toFixed(1)}pp
+                      {r.deltaPct.toFixed(1)}%
                     </span>
                   </div>
                   <p style={{ ...T.body, fontSize: 11, lineHeight: 1.45, marginLeft: 15 }}>
@@ -398,7 +398,7 @@ export default function RecommendedMix() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                   <DirIcon size={11} color={dColor} strokeWidth={2.25} />
                   <span style={{ ...T.num, fontSize: 12, fontWeight: 700, color: dColor }}>
-                    {delta >= 0 ? '+' : ''}{delta.toFixed(1)}pp
+                    {delta >= 0 ? '+' : ''}{delta.toFixed(1)}%
                   </span>
                 </div>
 

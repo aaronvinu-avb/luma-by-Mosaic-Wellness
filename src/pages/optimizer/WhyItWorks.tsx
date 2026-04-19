@@ -672,7 +672,7 @@ export default function WhyItWorks() {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }} />
                     <span style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: '#34D399' }}>
-                      +{(rec?.deltaPct || 0).toFixed(1)}pp
+                      +{(rec?.deltaPct || 0).toFixed(1)}%
                     </span>
                   </div>
                   <p style={{ ...T.body, fontSize: 11, marginTop: 2, lineHeight: 1.4 }}>
@@ -725,7 +725,7 @@ export default function WhyItWorks() {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <ChannelName channel={ch} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }} />
                     <span style={{ fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, color: '#F87171' }}>
-                      {(rec?.deltaPct || 0).toFixed(1)}pp
+                      {(rec?.deltaPct || 0).toFixed(1)}%
                     </span>
                   </div>
                   <p style={{ ...T.body, fontSize: 11, marginTop: 2, lineHeight: 1.4 }}>
