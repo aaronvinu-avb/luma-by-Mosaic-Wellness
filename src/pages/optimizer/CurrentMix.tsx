@@ -138,7 +138,7 @@ export default function CurrentMix() {
       const sa = STATUS_ORDER[diagnosis[a]?.status ?? 'efficient'] ?? 3;
       const sb = STATUS_ORDER[diagnosis[b]?.status ?? 'efficient'] ?? 3;
       if (sa !== sb) return sa - sb;
-      return (currentPlan.channels[b]?.periodRevenue || 0) - (currentPlan.channels[a]?.periodRevenue || 0);
+      return (currentPlan.channels[b]?.revenue || 0) - (currentPlan.channels[a]?.revenue || 0);
     }),
   [diagnosis, currentPlan]);
 
@@ -418,8 +418,8 @@ export default function CurrentMix() {
               {[
                 { h: 'Channel',    align: 'left'   },
                 { h: 'Allocation', align: 'right'  },
-                { h: 'Spend',      align: 'right'  },
-                { h: 'Revenue',    align: 'right'  },
+                { h: 'Spend (mo)', align: 'right'  },
+                { h: 'Revenue (mo)', align: 'right'  },
                 { h: 'Forecast ROAS', align: 'center' },
                 { h: 'Health',     align: 'center' },
                 { h: '',           align: 'center' },
@@ -441,8 +441,8 @@ export default function CurrentMix() {
               const st        = STATUS_META[status];
               const isSelected = drawerChannel === ch;
 
-              const spend   = row?.periodSpend  ?? 0;
-              const revenue = row?.periodRevenue ?? 0;
+              const spend   = row?.spend ?? 0;
+              const revenue = row?.revenue ?? 0;
               const roas    = row?.roas          ?? 0;
               const allocPct = (row?.allocationPct ?? 0).toFixed(1);
 

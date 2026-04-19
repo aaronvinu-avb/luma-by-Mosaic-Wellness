@@ -11,9 +11,10 @@ export type PlanningMode   = 'conservative' | 'target' | 'aggressive';
  * This is a PRODUCT-LEVEL CONSTANT (₹50,00,000 = ₹50L / month, ₹6Cr annual)
  * — not a historical average. Every page that needs a "what if the user
  * hasn't typed anything yet" fallback should import this constant rather
- * than hardcoding a literal or deriving from historical spend. Historical
- * seeding is intentionally disabled because it makes the default wander
- * with the dataset and surfaces non-round, confusing values in the UI.
+ * than hardcoding a literal or deriving from historical spend.
+ *
+ * Channel allocation defaults (historical share of spend) are applied in
+ * `useOptimizerModel` once training data is available — not here.
  */
 export const DEFAULT_MONTHLY_BUDGET = 5_000_000;
 
@@ -45,8 +46,9 @@ interface OptimizerState {
 
 const OptimizerContext = createContext<OptimizerState | undefined>(undefined);
 
-const DEFAULT_EQUAL_ALLOC: Record<string, number> = Object.fromEntries(
-  CHANNELS.map((ch) => [ch, 1 / CHANNELS.length])
+/** Equal 1/N shares — only used as a computation fallback when allocations are unset. */
+export const DEFAULT_EQUAL_ALLOC: Record<string, number> = Object.fromEntries(
+  CHANNELS.map((ch) => [ch, 1 / CHANNELS.length]),
 );
 
 export function OptimizerProvider({ children }: { children: ReactNode }) {
@@ -55,7 +57,8 @@ export function OptimizerProvider({ children }: { children: ReactNode }) {
   const [planningMode, setPlanningMode]             = useState<PlanningMode>('target');
   const [customStartMonth, setCustomStartMonth]     = useState('2025-01');
   const [customEndMonth, setCustomEndMonth]         = useState('2025-12');
-  const [allocations, setAllocations]               = useState<Record<string, number>>(DEFAULT_EQUAL_ALLOC);
+  /** Starts empty; `useOptimizerModel` seeds from historical dataset shares once baselines load. */
+  const [allocations, setAllocations]               = useState<Record<string, number>>({});
   const [paused, setPaused]                         = useState<Set<string>>(new Set());
 
   return (

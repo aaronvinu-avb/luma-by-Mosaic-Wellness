@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { useOptimizer, DEFAULT_MONTHLY_BUDGET } from '@/contexts/OptimizerContext';
 import { CHANNELS } from '@/lib/mockData';
@@ -232,10 +232,14 @@ export function useOptimizerModel(): OptimizerModelOutput {
     return normalizeShares(out);
   }, [baselines]);
 
-  useEffect(() => {
-    if (Object.keys(allocations).length > 0) return;
+  /** Seed context allocations once from real historical spend shares (full dataset). User edits persist. */
+  const didSeedHistoricalAllocations = useRef(false);
+  useLayoutEffect(() => {
+    if (baselines.length === 0) return;
+    if (didSeedHistoricalAllocations.current) return;
     setAllocations({ ...historicalFractions });
-  }, [allocations, historicalFractions, setAllocations]);
+    didSeedHistoricalAllocations.current = true;
+  }, [baselines, historicalFractions, setAllocations]);
 
   const effectiveShares = useMemo(
     () => effectiveAllocationShares(allocations, paused),
