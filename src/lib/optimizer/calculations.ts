@@ -1,5 +1,6 @@
 import { CHANNELS, type MarketingRecord } from '@/lib/mockData';
 import { getAggregatedState, type AggregatedState } from '@/lib/calculations';
+import { DEFAULT_MONTHLY_BUDGET } from '@/contexts/OptimizerContext';
 
 export type OptimizerPlanningMode = 'conservative' | 'target' | 'aggressive';
 export type ChannelHealthStatus = 'under-scaled' | 'over-scaled' | 'saturated' | 'efficient';
@@ -216,17 +217,14 @@ export function computeChannelBaselines(rawData: StateInput): ChannelBaseline[] 
   });
 
   // Normalize model spend scale so historical monthly baseline aligns with the
-  // product planning baseline (₹50L/mo). This fixes budget-scale mismatch when
+  // product default monthly budget. This fixes budget-scale mismatch when
   // source data carries a much larger absolute spend level.
-  const TARGET_PORTFOLIO_MONTHLY_SPEND = 5_000_000;
   const rawPortfolioMonthlySpend = CHANNELS.reduce((s, ch) => {
     const spends = channelPoints[ch].map(p => p.spend);
     return s + mean(spends);
   }, 0);
   const scaleFactor =
-    rawPortfolioMonthlySpend > 0
-      ? TARGET_PORTFOLIO_MONTHLY_SPEND / rawPortfolioMonthlySpend
-      : 1;
+    rawPortfolioMonthlySpend > 0 ? DEFAULT_MONTHLY_BUDGET / rawPortfolioMonthlySpend : 1;
 
   const totals = CHANNELS.map(ch => {
     const points = channelPoints[ch].map(p => ({

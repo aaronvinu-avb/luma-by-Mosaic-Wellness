@@ -4,7 +4,6 @@ import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { computeBudgetScenarios } from '@/lib/optimizer/calculations';
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS } from '@/lib/mockData';
-import { DEFAULT_MONTHLY_BUDGET } from '@/contexts/OptimizerContext';
 import { Shield, Scale, Target, TrendingUp, Zap, Sliders } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -21,10 +20,8 @@ const chartTooltipStyle = {
   labelStyle: { color: 'var(--text-secondary)' },
 };
 
-// Scenario ladder anchored at the product's canonical monthly budget (₹50L).
-// Multipliers are applied to that baseline so the five scenarios always span
-// ₹35L → ₹75L regardless of the historical run-rate. Keeping them here as
-// named tuples makes it obvious what each tier represents.
+// Scenario ladder: multipliers are applied to **Current Mix monthly budget** from
+// OptimizerContext (via `useOptimizerModel`) so tiers recentre when the user changes budget.
 const SCENARIO_TIERS = [
   { key: 'conservative', label: 'Conservative', multiplier: 0.70, icon: Shield,    color: '#60A5FA' },
   { key: 'moderate',     label: 'Moderate',     multiplier: 0.85, icon: Scale,     color: '#2DD4BF' },
@@ -33,12 +30,16 @@ const SCENARIO_TIERS = [
   { key: 'aggressive',   label: 'Aggressive',   multiplier: 1.50, icon: Zap,       color: '#F472B6' },
 ] as const;
 
-const BASELINE_BUDGET = DEFAULT_MONTHLY_BUDGET;
-const SCENARIO_BUDGETS = SCENARIO_TIERS.map(t => Math.round(BASELINE_BUDGET * t.multiplier));
+const BASELINE_IDX = SCENARIO_TIERS.findIndex(t => t.key === 'baseline');
 
 export default function ScenarioPlanner() {
-  const { isLoading, currentPlan, debug } = useOptimizerModel();
+  const { isLoading, currentPlan, debug, monthlyBudget, planningMode } = useOptimizerModel();
   const [marketMultiplier, setMarketMultiplier] = useState(1.0);
+
+  const scenarioBudgets = useMemo(
+    () => SCENARIO_TIERS.map(t => Math.round(monthlyBudget * t.multiplier)),
+    [monthlyBudget],
+  );
 
   const scenarioLabels = SCENARIO_TIERS.map(t => t.label);
   const scenarioColors = SCENARIO_TIERS.map(t => t.color);
@@ -54,21 +55,22 @@ export default function ScenarioPlanner() {
 
   const rawScenarios = useMemo(
     () => baselines.length > 0
-      ? computeBudgetScenarios(baselines, SCENARIO_BUDGETS, 'target', currentAllocationPct)
+      ? computeBudgetScenarios(baselines, scenarioBudgets, planningMode, currentAllocationPct)
       : [],
-    [baselines, currentAllocationPct],
+    [baselines, scenarioBudgets, planningMode, currentAllocationPct],
   );
 
   const baselineAlignedScenarios = useMemo(() => {
-    const baselineRevenue = currentPlan.blendedROAS * BASELINE_BUDGET;
+    const baselineTierBudget = scenarioBudgets[BASELINE_IDX];
+    const baselineRevenue = currentPlan.blendedROAS * monthlyBudget;
     const alignedBaseline = {
-      budget: BASELINE_BUDGET,
+      budget: monthlyBudget,
       allocationsPct: currentAllocationPct,
       totalRevenue: baselineRevenue,
       blendedROAS: currentPlan.blendedROAS,
     };
-    return rawScenarios.map(s => (s.budget === BASELINE_BUDGET ? alignedBaseline : s));
-  }, [rawScenarios, currentAllocationPct, currentPlan.blendedROAS]);
+    return rawScenarios.map(s => (s.budget === baselineTierBudget ? alignedBaseline : s));
+  }, [rawScenarios, currentAllocationPct, currentPlan.blendedROAS, monthlyBudget, scenarioBudgets]);
 
   const scenarios = useMemo(
     () =>
@@ -82,8 +84,7 @@ export default function ScenarioPlanner() {
 
   // Forecast chart keeps three representative tracks (lowest / baseline /
   // highest) so the reader can eyeball the spread without a five-line fight.
-  const BASELINE_IDX = SCENARIO_TIERS.findIndex(t => t.key === 'baseline');
-  const HIGH_IDX     = SCENARIO_TIERS.length - 1;
+  const HIGH_IDX = SCENARIO_TIERS.length - 1;
 
   const projectionData = useMemo(() => {
     if (scenarios.length < SCENARIO_TIERS.length) return [];
@@ -122,7 +123,7 @@ export default function ScenarioPlanner() {
           <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>Model budget scenarios across varying market conditions. Baseline mirrors the Current Mix reference.</p>
           <div style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', padding: '6px 12px', borderRadius: 8 }}>
             <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Baseline Budget: </span>
-            <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginLeft: 8, fontVariantNumeric: 'tabular-nums' }}>{formatINRCompact(BASELINE_BUDGET)} / mo</span>
+            <span style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginLeft: 8, fontVariantNumeric: 'tabular-nums' }}>{formatINRCompact(monthlyBudget)} / mo</span>
           </div>
         </div>
 
@@ -151,7 +152,7 @@ export default function ScenarioPlanner() {
         </div>
       </div>
 
-      {/* Five-tier Scenario Grid — ₹35L → ₹75L anchored at the ₹50L baseline */}
+      {/* Five-tier Scenario Grid — multipliers × Current Mix monthly budget */}
       <div
         className="scenario-cards-grid"
         style={{ display: 'grid', gridTemplateColumns: `repeat(${SCENARIO_TIERS.length}, 1fr)`, gap: 12 }}

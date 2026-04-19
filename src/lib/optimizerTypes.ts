@@ -18,6 +18,7 @@
 
 import type { MonthPoint, MixChannelEfficiency } from './calculations';
 import type { CalibrationOutput, UpliftConfidence } from './optimizerCalibration';
+import type { PlanningMode, PlanningPeriod } from '@/contexts/OptimizerContext';
 
 // ── Per-channel forecast row (inside a plan) ─────────────────────────────────
 
@@ -187,9 +188,11 @@ export interface OptimizerModelOutput {
   dataRange: { min: string; max: string } | null;
   totalHistoricalMonths: number;
 
-  // ── Planning metadata ──────────────────────────────────────────────────────
+  // ── Planning metadata (mirrors OptimizerContext master inputs) ─────────────
   selectedRange: MonthPoint[];
   durationMonths: number;
+  planningMode: PlanningMode;
+  planningPeriod: PlanningPeriod;
   monthlyBudget: number;
   totalPeriodBudget: number;
   modeMultiplier: number;

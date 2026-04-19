@@ -66,7 +66,7 @@ export default function CurrentMix() {
   } = useOptimizerModel();
 
   const {
-    budget, setBudget,
+    setMonthlyBudget,
     planningPeriod, setPlanningPeriod,
     planningMode, setPlanningMode,
     customStartMonth, setCustomStartMonth,
@@ -105,8 +105,8 @@ export default function CurrentMix() {
     ));
   }, [pendingAllocs]);
 
-  // ── Derived values ───────────────────────────────────────────────────────────
-  const safeBudget = Number.isFinite(budget) && budget > 0 ? budget : DEFAULT_MONTHLY_BUDGET;
+  // ── Derived values — `monthlyBudget` from model is the resolved monthly ₹ (same as context after validation)
+  const safeBudget = monthlyBudget;
 
   // Period label used in the budget helper text ("… total (annual)").
   const periodLabel = (
@@ -216,11 +216,11 @@ export default function CurrentMix() {
                 const digits = e.target.value.replace(/[^0-9]/g, '');
                 setBudgetInputDraft(digits);
                 const n = digits === '' ? 0 : Number(digits);
-                if (Number.isFinite(n)) setBudget(n);
+                if (Number.isFinite(n)) setMonthlyBudget(n);
               }}
               onBlur={() => {
                 setBudgetInputFocused(false);
-                setBudget((b) => {
+                setMonthlyBudget((b) => {
                   const safe = Number.isFinite(b) && b > 0 ? b : DEFAULT_MONTHLY_BUDGET;
                   return Math.round(safe / 1000) * 1000;
                 });

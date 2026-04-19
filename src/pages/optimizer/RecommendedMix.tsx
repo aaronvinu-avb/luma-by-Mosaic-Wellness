@@ -26,8 +26,8 @@ import type { ChannelRecommendation } from '@/lib/optimizerTypes';
 import { T, CARD, badgeStyle, dotStyle, ACTION_META } from './_shared/ui';
 
 // Table column template — shared between header and rows
-//   chevron · channel · current % · rec'd % · change · rec'd ROAS · action
-const COL = '18px minmax(140px,1fr) 78px 86px 88px 88px 82px';
+//   chevron · channel · current % · rec'd % · spend (mo) · change · rec'd ROAS · action
+const COL = '18px minmax(140px,1fr) 78px 86px minmax(108px,1.1fr) 88px 88px 82px';
 
 // Confidence tier styling
 const CONFIDENCE_META = {
@@ -330,6 +330,7 @@ export default function RecommendedMix() {
             { h: 'Channel',     align: 'left'   },
             { h: 'Current',     align: 'right'  },
             { h: 'Recommended', align: 'right'  },
+            { h: 'SPEND (MO)',  align: 'right'  },
             { h: 'Change',      align: 'center' },
             { h: 'Forecast ROAS', align: 'right'  },
             { h: 'Action',      align: 'center' },
@@ -349,6 +350,12 @@ export default function RecommendedMix() {
           const action   = rec ? actionMeta(rec) : { label: 'Hold' as const, color: '#94a3b8' };
           const delta    = rec?.deltaPct ?? 0;
           const dColor   = deltaColor(delta);
+
+          // Monthly spend from live budget (same `monthlyBudget` as Current Mix / KPIs)
+          const recPct = rec?.recommendedPct ?? 0;
+          const curPct = rec?.currentPct ?? curRow?.allocationPct ?? 0;
+          const recSpendMo = (recPct / 100) * monthlyBudget;
+          const curSpendMo = (curPct / 100) * monthlyBudget;
 
           // Channel-level ROAS under the recommended allocation
           const recROAS  = recRow && recRow.spend > 0 ? recRow.revenue / recRow.spend : 0;
@@ -393,6 +400,16 @@ export default function RecommendedMix() {
                 <p style={{ ...T.num, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', margin: 0, textAlign: 'right' }}>
                   {(rec?.recommendedPct || 0).toFixed(1)}%
                 </p>
+
+                {/* SPEND (MO) — (pct / 100) × monthlyBudget; secondary = current mix at same budget */}
+                <div style={{ textAlign: 'right' }}>
+                  <p style={{ ...T.num, fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                    {formatINRCompact(recSpendMo)}
+                  </p>
+                  <p style={{ ...T.body, fontSize: 10, color: 'var(--text-muted)', margin: '3px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                    was {formatINRCompact(curSpendMo)}
+                  </p>
+                </div>
 
                 {/* Change — quiet direction indicator */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>

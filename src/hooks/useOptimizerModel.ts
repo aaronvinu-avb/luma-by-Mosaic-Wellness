@@ -11,7 +11,6 @@ import type {
   ChannelExplanation,
   UpliftSummary,
 } from '@/lib/optimizerTypes';
-import type { MonthPoint } from '@/lib/calculations';
 import {
   computeChannelBaselines,
   computeCurrentMixForecast,
@@ -22,33 +21,6 @@ import {
   type ChannelBaseline,
   type TimingEffects,
 } from '@/lib/optimizer/calculations';
-
-const TIMELINE_MONTHS: MonthPoint[] = (() => {
-  const start = 2023;
-  const end = 2027;
-  return Array.from({ length: (end - start + 1) * 12 }, (_, i) => {
-    const y = start + Math.floor(i / 12);
-    const mo = i % 12;
-    return { key: `${y}-${String(mo + 1).padStart(2, '0')}`, year: y, month: mo };
-  });
-})();
-
-function buildMonthRange(
-  period: '1m' | '1q' | '6m' | '1y' | 'custom',
-  customStartMonth: string,
-  customEndMonth: string,
-): MonthPoint[] {
-  if (period === 'custom') {
-    const startIdx = TIMELINE_MONTHS.findIndex(m => m.key === customStartMonth);
-    const endIdx = TIMELINE_MONTHS.findIndex(m => m.key === customEndMonth);
-    if (startIdx < 0 || endIdx < 0) return [];
-    return TIMELINE_MONTHS.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1);
-  }
-  const currentMonthKey = '2025-01';
-  const startIdx = Math.max(0, TIMELINE_MONTHS.findIndex(m => m.key === currentMonthKey));
-  const len = period === '1m' ? 1 : period === '1q' ? 3 : period === '6m' ? 6 : 12;
-  return TIMELINE_MONTHS.slice(startIdx, startIdx + len);
-}
 
 function toPct(shares: Record<string, number>): Record<string, number> {
   const out: Record<string, number> = {};
@@ -182,7 +154,7 @@ export function useOptimizerModel(): OptimizerModelOutput {
   } = useMarketingData({ includeGlobalAggregate: true });
 
   const {
-    budget,
+    monthlyBudget,
     planningPeriod,
     planningMode,
     customStartMonth,
@@ -190,16 +162,14 @@ export function useOptimizerModel(): OptimizerModelOutput {
     allocations,
     setAllocations,
     paused,
+    selectedRange,
+    durationMonths,
+    totalPeriodBudget: totalPeriodBudgetFromContext,
   } = useOptimizer();
 
   const sourceData = globalAggregate ?? aggregate;
-  const safeBudget = Number.isFinite(budget) && budget > 0 ? budget : DEFAULT_MONTHLY_BUDGET;
-  const selectedRange = useMemo(
-    () => buildMonthRange(planningPeriod, customStartMonth, customEndMonth),
-    [planningPeriod, customStartMonth, customEndMonth],
-  );
-  const durationMonths = Math.max(1, selectedRange.length);
-  const totalPeriodBudget = safeBudget * durationMonths;
+  const safeBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0 ? monthlyBudget : DEFAULT_MONTHLY_BUDGET;
+  const totalPeriodBudget = totalPeriodBudgetFromContext;
   const planningMonth = planningPeriod === '1m' && selectedRange[0] ? selectedRange[0].month : null;
 
   const baselines = useMemo<ChannelBaseline[]>(
@@ -450,7 +420,10 @@ export function useOptimizerModel(): OptimizerModelOutput {
     return { min: boundaries.earliestDate, max: boundaries.latestDate };
   }, [boundaries]);
 
-  const scenarioBudgets = useMemo(() => [3500000, 4250000, 5000000, 6000000, 7500000], []);
+  const scenarioBudgets = useMemo(
+    () => [0.7, 0.85, 1, 1.2, 1.5].map(m => Math.round(safeBudget * m)),
+    [safeBudget],
+  );
   const scenarioOutputs = useMemo(
     () => computeBudgetScenarios(baselines, scenarioBudgets, planningMode, currentAllocationPct, { timingEffects, planningMonth }),
     [baselines, scenarioBudgets, planningMode, currentAllocationPct, timingEffects, planningMonth],
@@ -469,6 +442,8 @@ export function useOptimizerModel(): OptimizerModelOutput {
     totalHistoricalMonths,
     selectedRange,
     durationMonths,
+    planningMode,
+    planningPeriod,
     monthlyBudget: safeBudget,
     totalPeriodBudget,
     modeMultiplier: 1,
