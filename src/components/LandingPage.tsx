@@ -1,9 +1,15 @@
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { prefetchMarketingData } from '@/lib/prefetchMarketingData';
 
 const ICON_SIZE = 86;
 
 export function LandingPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const warmMarketingCache = () => {
+    void prefetchMarketingData(queryClient);
+  };
 
   return (
     <div
@@ -123,6 +129,7 @@ export function LandingPage() {
 
         {/* CTA */}
         <button
+          onFocus={warmMarketingCache}
           onClick={() => navigate('/dashboard')}
           style={{
             marginTop: 48,
@@ -141,6 +148,7 @@ export function LandingPage() {
             boxShadow: '0 8px 24px rgba(240,235,228,0.1)',
           }}
           onMouseEnter={(e) => {
+            warmMarketingCache();
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 16px 40px rgba(240,235,228,0.25), 0 0 20px rgba(232,118,58,0.3)';
             e.currentTarget.style.background = '#FFFFFF';

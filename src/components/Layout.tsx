@@ -2,7 +2,9 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { useLocation } from 'react-router-dom';
 import { useAppContext, DateFilterType } from '@/contexts/AppContext';
-import { useMarketingData } from '@/hooks/useMarketingData';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getMarketingDatasetQueryOptions } from '@/lib/marketingDataLoader';
+import { computeDataBoundaries } from '@/lib/dataBoundaries';
 
 const PAGE_NAMES: Record<string, string> = {
   // Measurement
@@ -28,7 +30,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const pageName = PAGE_NAMES[location.pathname] || 'Dashboard';
   const { dateFilter, setDateFilter } = useAppContext();
-  const { boundaries } = useMarketingData();
+  const queryClient = useQueryClient();
+  const { data: boundaries } = useQuery({
+    ...getMarketingDatasetQueryOptions(queryClient),
+    select: (d) => computeDataBoundaries(d.records),
+  });
 
   const allLabel = boundaries ? boundaries.fullRangeLabel : 'All time';
   const yearOptions = boundaries?.availableYears ?? [];

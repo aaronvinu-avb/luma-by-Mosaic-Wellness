@@ -1,22 +1,13 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useOptimizerModel } from '@/hooks/useOptimizerModel';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
+import { LazySection } from '@/components/LazySection';
+import { ChartSkeleton } from '@/components/ChartSkeleton';
 import { formatINRCompact } from '@/lib/formatCurrency';
 import { Shield, Scale, Target, TrendingUp, Zap, Sliders } from 'lucide-react';
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
-} from 'recharts';
 import { Slider } from '@/components/ui/slider';
 
-const chartTooltipStyle = {
-  contentStyle: {
-    backgroundColor: 'var(--bg-root)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)',
-    borderRadius: 10, padding: '10px 14px', fontFamily: 'Plus Jakarta Sans', fontSize: 12,
-    boxShadow: 'var(--shadow-lg)',
-  },
-  itemStyle: { color: 'var(--text-primary)' },
-  labelStyle: { color: 'var(--text-secondary)' },
-};
+const ScenarioForecastAreaChart = lazy(() => import('@/components/charts/ScenarioForecastAreaChart'));
 
 // Scenario ladder: multipliers are applied to **Current Mix monthly budget** from
 // OptimizerContext (via `useOptimizerModel`) so tiers recentre when the user changes budget.
@@ -261,32 +252,16 @@ export default function ScenarioPlanner() {
 
         <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
 
-        <ResponsiveContainer width="100%" height={400}>
-          <AreaChart data={projectionData}>
-            <defs>
-              <linearGradient id="grad-con" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor={scenarioColors[0]}            stopOpacity={0.1}/>
-                <stop offset="95%" stopColor={scenarioColors[0]}            stopOpacity={0}/>
-              </linearGradient>
-              <linearGradient id="grad-base" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor={scenarioColors[BASELINE_IDX]} stopOpacity={0.1}/>
-                <stop offset="95%" stopColor={scenarioColors[BASELINE_IDX]} stopOpacity={0}/>
-              </linearGradient>
-              <linearGradient id="grad-agg" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor={scenarioColors[HIGH_IDX]}     stopOpacity={0.1}/>
-                <stop offset="95%" stopColor={scenarioColors[HIGH_IDX]}     stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" vertical={false} />
-            <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} interval={3} />
-            <YAxis tickFormatter={(v: number) => formatINRCompact(v)} tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} width={72} />
-            <Tooltip formatter={(v: number) => formatINRCompact(v)} {...chartTooltipStyle} />
-
-            <Area type="monotone" dataKey="aggressive"   stroke={scenarioColors[HIGH_IDX]}     fill="url(#grad-agg)"  strokeWidth={2.25} />
-            <Area type="monotone" dataKey="baseline"     stroke={scenarioColors[BASELINE_IDX]} fill="url(#grad-base)" strokeWidth={2.75} />
-            <Area type="monotone" dataKey="conservative" stroke={scenarioColors[0]}            fill="url(#grad-con)"  strokeWidth={2.25} />
-          </AreaChart>
-        </ResponsiveContainer>
+        <LazySection minHeight={420} rootMargin="160px 0px">
+          <Suspense fallback={<ChartSkeleton height={400} />}>
+            <ScenarioForecastAreaChart
+              projectionData={projectionData}
+              scenarioColors={scenarioColors}
+              baselineIdx={BASELINE_IDX}
+              highIdx={HIGH_IDX}
+            />
+          </Suspense>
+        </LazySection>
       </div>
 
       <div className="scenario-bottom-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>

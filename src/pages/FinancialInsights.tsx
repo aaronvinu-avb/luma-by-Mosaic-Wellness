@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
+import { LazySection } from '@/components/LazySection';
+import { ChartSkeleton } from '@/components/ChartSkeleton';
 import { 
   getChannelSummaries, 
   getFinancialMetrics, 
@@ -9,20 +11,9 @@ import {
 import { formatINR, formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import { ChannelName } from '@/components/ChannelName';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  Cell, Legend, PieChart, Pie, AreaChart, Area
-} from 'recharts';
-import { Wallet, TrendingUp, Users, Clock, ArrowUpRight, DollarSign, AlertTriangle } from 'lucide-react';
+import { Wallet, TrendingUp, Users, Clock, ArrowUpRight, AlertTriangle } from 'lucide-react';
 
-const tooltipStyle = {
-  contentStyle: { 
-    backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', 
-    borderRadius: 10, padding: '10px 14px', fontFamily: 'Plus Jakarta Sans', fontSize: 12, boxShadow: 'var(--shadow-sm)' 
-  },
-  itemStyle: { color: 'var(--text-primary)' },
-  labelStyle: { color: 'var(--text-secondary)' },
-};
+const FinancialPaybackBarChart = lazy(() => import('@/components/charts/FinancialPaybackBarChart'));
 
 export default function FinancialInsights() {
   const { data, isLoading } = useMarketingData();
@@ -185,29 +176,11 @@ export default function FinancialInsights() {
             <h2 style={{ fontFamily: 'Outfit', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Payback Analysis (Days)</h2>
           </div>
           
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={sortedFinancialsByPayback} layout="vertical" margin={{ left: 20 }}>
-              <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" horizontal={false} />
-              <XAxis type="number" hide />
-              <YAxis 
-                type="category" 
-                dataKey="channel" 
-                tick={{ fontSize: 11, fill: 'var(--text-primary)', fontFamily: 'Outfit' }} 
-                width={100} 
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip 
-                {...tooltipStyle} 
-                formatter={(v: number) => [`${v} days`, 'Est. Payback']}
-              />
-              <Bar dataKey="paybackDays" radius={[0, 4, 4, 0]} barSize={16}>
-                {sortedFinancialsByPayback.map((entry, index) => (
-                  <Cell key={index} fill={entry.paybackDays < 60 ? '#34D399' : entry.paybackDays < 120 ? '#FBBF24' : '#F87171'} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <LazySection minHeight={340} rootMargin="120px 0px">
+            <Suspense fallback={<ChartSkeleton height={320} />}>
+              <FinancialPaybackBarChart data={sortedFinancialsByPayback} />
+            </Suspense>
+          </LazySection>
           
           <div style={{ marginTop: 20, padding: 16, borderRadius: 12, backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-subtle)' }}>
             <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>

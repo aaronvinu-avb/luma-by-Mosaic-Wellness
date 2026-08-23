@@ -1,6 +1,7 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
+import { ChartSkeleton } from '@/components/ChartSkeleton';
 import { ChannelName } from '@/components/ChannelName';
 import { getMonthlyAggregation, getSeasonalityMetrics, getDayOfWeekMetrics } from '@/lib/calculations';
 import { formatINRCompact, formatROAS } from '@/lib/formatCurrency';
@@ -16,56 +17,27 @@ import {
   Download,
   Flame
 } from 'lucide-react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-  ReferenceArea, BarChart, Bar, Label
-} from 'recharts';
 import { exportToCSV } from '@/lib/exportData';
-import { COMPETITOR_EVENTS } from '@/lib/mockData';
 import { LazySection } from '@/components/LazySection';
+import type { SpikeRow } from '@/components/charts/trend/TrendSpikeLineChart';
+import type { TrendMetric } from '@/components/charts/trend/TrendMonthlyMultiLineChart';
 
-type Metric = 'roas' | 'revenue' | 'spend';
+const TrendMonthlyMultiLineChart = lazy(() => import('@/components/charts/trend/TrendMonthlyMultiLineChart'));
+const TrendSpikeLineChart = lazy(() => import('@/components/charts/trend/TrendSpikeLineChart'));
+const TrendDowRoasBarChart = lazy(() => import('@/components/charts/trend/TrendDowRoasBarChart'));
+
+type Metric = TrendMetric;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DOW_TO_DAY: Record<string, string> = {
-  Mon: 'Mon',
-  Tue: 'Tue',
-  Wed: 'Wed',
-  Thu: 'Thu',
-  Fri: 'Fri',
-  Sat: 'Sat',
-  Sun: 'Sun',
-};
-
-const chartTooltipStyle = {
-  contentStyle: {
-    backgroundColor: 'var(--bg-root)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)',
-    borderRadius: 10, padding: '10px 14px', fontFamily: 'Plus Jakarta Sans', fontSize: 12,
-    boxShadow: 'var(--shadow-lg)',
-  },
-  itemStyle: { color: 'var(--text-primary)' },
-  labelStyle: { color: 'var(--text-secondary)' },
-};
 
 const darkCard = (delay = '0ms') => ({
   className: 'rounded-2xl card-enter',
   style: {
     backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', boxShadow: 'var(--shadow-sm)', padding: 24, animationDelay: delay,
     transition: 'transform var(--duration) var(--ease), box-shadow var(--duration) var(--ease), border-color var(--duration) var(--ease)',
-  } as React.CSSProperties,
-  onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; },
-  onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; },
+  } as CSSProperties,
+  onMouseEnter: (e: MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; },
+  onMouseLeave: (e: MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; },
 });
-
-type LegendPayloadEntry = { value: string };
-type SpikeRow = { week: string; revenue: number; avg: number | null; spike: boolean; dip: boolean };
-
-const CustomLegend = memo(({ payload }: { payload?: LegendPayloadEntry[] }) => (
-  <div className="flex flex-wrap gap-3 justify-center mt-2">
-    {payload?.map((entry, i: number) => (
-      <ChannelName key={i} channel={entry.value} style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)' }} />
-    ))}
-  </div>
-));
 
 export default function TrendAnalysis() {
   const { data, aggregate, isLoading, boundaries } = useMarketingData({ includeGlobalAggregate: true });
@@ -322,43 +294,21 @@ export default function TrendAnalysis() {
         </button>
       </div>
 
-      <div {...darkCard('70ms')}>
-        <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
-          Monthly {metric === 'roas' ? 'ROAS' : metric.charAt(0).toUpperCase() + metric.slice(1)} by Channel
-        </h2>
-        <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
-        <ResponsiveContainer width="100%" height={400}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
-            <XAxis dataKey="month" tick={{ fontSize: 10, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} angle={-45} textAnchor="end" height={60} />
-            <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false}
-              tickFormatter={metric === 'roas' ? (v: number) => `${v}x` : (v: number) => formatINRCompact(v)} />
-            <Tooltip formatter={(v: number) => metric === 'roas' ? `${v.toFixed(2)}x` : formatINRCompact(v)} {...chartTooltipStyle} />
-            <Legend content={<CustomLegend />} />
-            {showCompetitorOverlay && COMPETITOR_EVENTS.map((event, idx) => (
-              <ReferenceArea
-                key={idx}
-                x1={event.startMonth}
-                x2={event.endMonth}
-                fill="rgba(239, 68, 68, 0.08)"
-                stroke="rgba(239, 68, 68, 0.2)"
-                strokeDasharray="3 3"
-              >
-                <Label 
-                  value={event.label} 
-                  position="top" 
-                  fill="#EF4444" 
-                  style={{ fontFamily: 'Outfit', fontSize: 10, fontWeight: 600 }}
-                />
-              </ReferenceArea>
-            ))}
-            {CHANNELS.map((ch, i) => (
-              <Line key={ch} type="monotone" dataKey={ch} stroke={CHANNEL_COLORS[i]}
-                strokeWidth={2} dot={false} name={ch} activeDot={{ r: 3 }} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      <LazySection minHeight={460} rootMargin="80px 0px">
+        <div {...darkCard('70ms')}>
+          <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Monthly {metric === 'roas' ? 'ROAS' : metric.charAt(0).toUpperCase() + metric.slice(1)} by Channel
+          </h2>
+          <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
+          <Suspense fallback={<ChartSkeleton height={400} />}>
+            <TrendMonthlyMultiLineChart
+              chartData={chartData}
+              metric={metric}
+              showCompetitorOverlay={showCompetitorOverlay}
+            />
+          </Suspense>
+        </div>
+      </LazySection>
 
       <LazySection minHeight={280}>
       <div {...darkCard('140ms')}>
@@ -443,23 +393,9 @@ export default function TrendAnalysis() {
         </h2>
         <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', marginTop: 3 }}>Weekly revenue vs 4-week rolling average</p>
         <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
-        <ResponsiveContainer width="100%" height={350}>
-          <LineChart data={spikeData.weeklyChart}>
-            <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
-            <XAxis dataKey="week" tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} angle={-45} textAnchor="end" height={60} />
-            <YAxis tickFormatter={(v: number) => formatINRCompact(v)} tick={{ fontSize: 10, fill: 'var(--text-muted)', fontFamily: 'Plus Jakarta Sans' }} axisLine={false} tickLine={false} />
-            <Tooltip formatter={(v: number) => v != null ? formatINRCompact(v) : '—'} {...chartTooltipStyle} />
-            <Legend wrapperStyle={{ color: 'var(--text-secondary)' }} />
-            {spikeAreas.map((a, i) => (
-              <ReferenceArea key={i} x1={a.x1} x2={a.x2}
-                fill={a.type === 'Spike' ? 'rgba(251,191,36,0.15)' : 'rgba(96,165,250,0.1)'}
-                label={{ value: a.type === 'Spike' ? 'Spike' : 'Dip', fontSize: 10, position: 'top', fill: a.type === 'Spike' ? '#FBBF24' : '#60A5FA' }}
-              />
-            ))}
-            <Line type="monotone" dataKey="revenue" stroke="#FB923C" strokeWidth={2} dot={false} name="Revenue" activeDot={{ r: 3 }} />
-            <Line type="monotone" dataKey="avg" stroke="var(--text-muted)" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="4-Week Avg" />
-          </LineChart>
-        </ResponsiveContainer>
+        <Suspense fallback={<ChartSkeleton height={350} />}>
+          <TrendSpikeLineChart weeklyChart={spikeData.weeklyChart} spikeAreas={spikeAreas} />
+        </Suspense>
 
         {spikeData.periods.length > 0 && (
           <div className="overflow-x-auto mt-4">
@@ -608,15 +544,9 @@ export default function TrendAnalysis() {
           const barData = dow.dowIndex.map((idx, i) => ({ day: DOW_LABELS[i], index: parseFloat(idx.toFixed(3)) }));
           return (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 24, alignItems: 'start' }}>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={barData}>
-                  <CartesianGrid strokeDasharray="2 4" stroke="var(--border-subtle)" />
-                  <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} domain={[0.7, 1.3]} />
-                  <Tooltip contentStyle={{ backgroundColor: 'var(--bg-root)', border: '1px solid var(--border-strong)', borderRadius: 8 }} />
-                  <Bar dataKey="index" fill={color} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <Suspense fallback={<ChartSkeleton height={220} />}>
+                <TrendDowRoasBarChart barData={barData} barColor={color} />
+              </Suspense>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {[
                   { label: 'Best', value: DOW_LABELS[dow.bestDay], color: '#34D399', icon: Trophy },

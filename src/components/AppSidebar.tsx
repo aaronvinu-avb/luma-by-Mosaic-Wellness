@@ -17,6 +17,8 @@ import { LumaLogo } from '@/components/LumaLogo';
 import { NavLink } from '@/components/NavLink';
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { prefetchMarketingData } from '@/lib/prefetchMarketingData';
 import {
   Sidebar,
   SidebarContent,
@@ -84,6 +86,10 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
   const location  = useLocation();
+  const queryClient = useQueryClient();
+  const warmMarketingCache = () => {
+    void prefetchMarketingData(queryClient);
+  };
 
   return (
     <Sidebar className="border-r-0 w-[232px] shadow-2xl">
@@ -158,6 +164,7 @@ export function AppSidebar() {
                             to={item.url}
                             end={item.url === '/dashboard'}
                             activeClassName=""
+                            onMouseEnter={warmMarketingCache}
                             style={{
                               display: 'flex',
                               alignItems: 'center',

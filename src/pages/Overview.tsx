@@ -7,7 +7,7 @@ import { getChannelSummaries, getMonthlyAggregation, getChannelSaturationModels,
 import { formatINR, formatINRCompact, formatROAS } from '@/lib/formatCurrency';
 import { parseLocalDate } from '@/lib/dataBoundaries';
 import { CHANNELS } from '@/lib/mockData';
-import { LineChart, Line, ResponsiveContainer } from 'recharts';
+import { MiniSparkline } from '@/components/MiniSparkline';
 import { Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/exportData';
 import { Link } from 'react-router-dom';
@@ -17,7 +17,7 @@ import { useAppContext } from '@/contexts/AppContext';
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
 
 export default function Overview() {
-  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource, boundaries } = useMarketingData({ includeGlobalAggregate: true });
+  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource, boundaries, isDatasetHydrating } = useMarketingData({ includeGlobalAggregate: true });
   const { dateFilter } = useAppContext();
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
@@ -178,6 +178,11 @@ export default function Overview() {
           </h1>
           <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-muted)', letterSpacing: '0.01em', marginTop: 6 }}>
             Marketing intelligence across 10 channels{boundaries ? ` · ${boundaries.fullRangeLabel}` : ''}
+            {isDatasetHydrating && (
+              <span style={{ display: 'block', marginTop: 4, fontSize: 11, color: '#60A5FA' }}>
+                Loading full history in the background…
+              </span>
+            )}
           </p>
         </div>
         <button 
@@ -232,7 +237,12 @@ export default function Overview() {
 
         {/* Right: opportunity banner + channel table */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-          <DeferredRender delay={150}>
+          <DeferredRender
+        delay={120}
+        fallback={
+          <div className="rounded-2xl skeleton-shimmer w-full" style={{ minHeight: 420, backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }} />
+        }
+      >
             {/* Opportunity Alert */}
             {opportunityGap > 0 && (
               <>
@@ -278,7 +288,7 @@ export default function Overview() {
                 {sorted.map((ch, i) => {
                   const isExpanded = expandedRow === i;
                   const isHovered = hoveredRow === i;
-                  const spark = channelMonthlyRevenue[ch.channel]?.map((v, j) => ({ j, v })) || [];
+                  const sparkValues = channelMonthlyRevenue[ch.channel] || [];
 
                   return (
                     <div key={ch.channel}>
@@ -301,13 +311,7 @@ export default function Overview() {
                           <span style={{ backgroundColor: `${ch.color}1F`, color: ch.color, fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 9999, fontVariantNumeric: 'tabular-nums' }}>{formatROAS(ch.roas)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                          <div style={{ width: 90, height: 28 }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={spark}>
-                                <Line type="monotone" dataKey="v" stroke={ch.color} strokeWidth={1.5} dot={false} />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
+                          <MiniSparkline data={sparkValues} width={90} height={28} color={ch.color} />
                         </div>
                       </div>
 
