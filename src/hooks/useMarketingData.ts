@@ -80,6 +80,7 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
   }, [filteredData]);
 
   const isDatasetHydrating = query.data?.loadState === 'partial';
+  const fetchError = query.data?.fetchError ?? null;
 
   return {
     ...query,
@@ -91,5 +92,6 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
     auditReport,
     boundaries,
     isDatasetHydrating,
+    fetchError,
   };
 }

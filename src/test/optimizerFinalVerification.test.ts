@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateMockData, CHANNELS, type MarketingRecord } from '@/lib/mockData';
+import { fetchMarketingApiPage } from '@/lib/marketingApi';
 import {
   classifyChannelHealth,
   computeBudgetScenarios,
@@ -9,22 +10,15 @@ import {
   computeTimingEffects,
 } from '@/lib/optimizer/calculations';
 
-const API_BASE = 'https://mosaicfellowship.in/api/data/marketing/daily';
 const PAGE_LIMIT = 500;
 
 async function fetchAllRecordsFromApi(): Promise<MarketingRecord[]> {
-  const firstRes = await fetch(`${API_BASE}?page=1&limit=${PAGE_LIMIT}`);
-  if (!firstRes.ok) throw new Error(`API page 1 failed: ${firstRes.status}`);
-  const firstJson = await firstRes.json();
-  const firstPage = Array.isArray(firstJson) ? firstJson : (firstJson.data ?? firstJson.results ?? []);
-  const totalPages = Number(firstJson?.pagination?.total_pages ?? 1);
-  const all: MarketingRecord[] = [...firstPage];
+  const first = await fetchMarketingApiPage(1, PAGE_LIMIT);
+  const totalPages = first.pagination?.total_pages ?? 1;
+  const all: MarketingRecord[] = [...(first.rows as MarketingRecord[])];
   for (let page = 2; page <= totalPages; page += 1) {
-    const res = await fetch(`${API_BASE}?page=${page}&limit=${PAGE_LIMIT}`);
-    if (!res.ok) throw new Error(`API page ${page} failed: ${res.status}`);
-    const json = await res.json();
-    const rows = Array.isArray(json) ? json : (json.data ?? json.results ?? []);
-    all.push(...rows);
+    const payload = await fetchMarketingApiPage(page, PAGE_LIMIT);
+    all.push(...(payload.rows as MarketingRecord[]));
   }
   return all;
 }

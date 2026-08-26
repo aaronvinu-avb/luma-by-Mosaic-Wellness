@@ -35,9 +35,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
     ...getMarketingDatasetQueryOptions(queryClient),
     select: (d) => computeDataBoundaries(d.records),
   });
+  const { data: datasetMeta } = useQuery({
+    ...getMarketingDatasetQueryOptions(queryClient),
+    select: (d) => ({ source: d.source, fetchError: d.fetchError }),
+  });
 
   const allLabel = boundaries ? boundaries.fullRangeLabel : 'All time';
   const yearOptions = boundaries?.availableYears ?? [];
+
+  const statusSource = datasetMeta?.source ?? 'loading';
+  const statusLabel =
+    statusSource === 'api' || statusSource === 'cached'
+      ? 'Live · All channels active'
+      : statusSource === 'mock'
+        ? 'Demo data · API unavailable'
+        : 'Loading data…';
+  const statusColor =
+    statusSource === 'api' || statusSource === 'cached'
+      ? '#7FAF7B'
+      : statusSource === 'mock'
+        ? '#FBBF24'
+        : 'var(--text-muted)';
 
   return (
     <SidebarProvider>
@@ -84,16 +102,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 style={{
                   backgroundColor: 'var(--bg-surface)',
                   border: '1px solid var(--border-subtle)',
-                  color: '#7FAF7B',
+                  color: statusColor,
                   padding: '5px 12px',
                   borderRadius: 9999,
                   fontFamily: 'Plus Jakarta Sans',
                   fontSize: 11,
                   fontWeight: 500,
                 }}
+                title={datasetMeta?.fetchError ?? undefined}
               >
-                <span className="pulse-dot" style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: '#7FAF7B', display: 'inline-block' }} />
-                Live · All channels active
+                <span className="pulse-dot" style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: statusColor, display: 'inline-block' }} />
+                {statusLabel}
               </div>
           </header>
           <main className="app-main flex-1 overflow-auto" style={{ padding: 32 }}>

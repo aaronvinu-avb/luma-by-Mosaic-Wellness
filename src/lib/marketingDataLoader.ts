@@ -1,12 +1,43 @@
 import type { QueryClient, UseQueryOptions } from '@tanstack/react-query';
 import { MarketingRecord, generateMockData } from '@/lib/mockData';
 import { getCache, setCache } from '@/lib/storage';
+import { lumaLog } from '@/lib/logger';
+import {
+  fetchMarketingApiPage,
+  MarketingApiError,
+  getMarketingApiBaseUrl,
+} from '@/lib/marketingApi';
+import { parseLocalDate } from '@/lib/dataBoundaries';
 
-const API_BASE = 'https://mosaicfellowship.in/api/data/marketing/daily';
 const PAGINATION_LIMIT = 500;
 const CONCURRENCY_LIMIT = 6;
-const CACHE_KEY = 'marketing_data_v1';
+const CACHE_KEY = 'marketing_data_v2';
 const CACHE_TTL = 1000 * 3600 * 24; // 24 hours
+
+const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** Reconcile day-of-week and derived metrics from base fields. */
+function repairMarketingRecord(record: MarketingRecord): MarketingRecord {
+  const spend = record.spend;
+  const revenue = record.revenue;
+  const impressions = record.impressions;
+  const clicks = record.clicks;
+  const conversions = record.conversions;
+
+  return {
+    ...record,
+    day_of_week: DOW_LABELS[parseLocalDate(record.date).getDay()],
+    roas: spend > 0 ? round2(revenue / spend) : 0,
+    ctr: impressions > 0 ? round2((clicks / impressions) * 100) : 0,
+    cpc: clicks > 0 ? round2(spend / clicks) : 0,
+    cpa: conversions > 0 ? round2(spend / conversions) : 0,
+    aov: conversions > 0 ? round2(revenue / conversions) : 0,
+  };
+}
 
 export const MARKETING_DATA_QUERY_KEY = ['marketing-data'] as const;
 
@@ -18,6 +49,8 @@ export type MarketingDatasetLoadResult = {
   droppedDuringNormalization: number;
   /** API multi-page fetch: first page returned immediately, remainder loads in background. */
   loadState?: 'partial' | 'complete';
+  /** Set when live API failed and demo data was used instead. */
+  fetchError?: string | null;
 };
 
 function toNumber(value: unknown): number {
@@ -36,7 +69,7 @@ function normalizeRecord(input: unknown): MarketingRecord | null {
     return null;
   }
 
-  return {
+  return repairMarketingRecord({
     date: raw.date,
     day_of_week: raw.day_of_week,
     channel: raw.channel,
@@ -51,7 +84,7 @@ function normalizeRecord(input: unknown): MarketingRecord | null {
     cpc: toNumber(raw.cpc),
     cpa: toNumber(raw.cpa),
     aov: toNumber(raw.aov),
-  };
+  });
 }
 
 function normalizeRecords(records: unknown[]): { records: MarketingRecord[]; dropped: number } {
@@ -64,19 +97,24 @@ function normalizeRecords(records: unknown[]): { records: MarketingRecord[]; dro
   return { records: out, dropped };
 }
 
+function formatFetchError(err: unknown): string {
+  if (err instanceof MarketingApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 async function fetchInChunks(totalPages: number): Promise<unknown[]> {
   const results: unknown[][] = [];
   const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+  const baseUrl = getMarketingApiBaseUrl();
 
   for (let i = 0; i < pages.length; i += CONCURRENCY_LIMIT) {
     const chunk = pages.slice(i, i + CONCURRENCY_LIMIT);
     const chunkResults = await Promise.all(
       chunk.map(async (page) => {
-        const res = await fetch(`${API_BASE}?page=${page}&limit=${PAGINATION_LIMIT}`);
-        if (!res.ok) throw new Error(`API error on page ${page}: ${res.status}`);
-        const json = await res.json();
-        return Array.isArray(json) ? json : json.data ?? json.results ?? [];
-      })
+        const payload = await fetchMarketingApiPage(page, PAGINATION_LIMIT, baseUrl);
+        return payload.rows;
+      }),
     );
     results.push(...chunkResults);
   }
@@ -108,20 +146,24 @@ function scheduleRemainingPages(
           source: 'api',
           droppedDuringNormalization: dropped,
           loadState: 'complete',
+          fetchError: null,
         };
       });
 
-      setCache(CACHE_KEY, merged).catch(err => console.error('Cache save failed:', err));
+      setCache(CACHE_KEY, merged).catch(err => lumaLog.error('Cache save failed:', err));
 
-      const end = performance.now();
-      console.log(
-        `[Luma] Background hydration: merged ${merged.length} records across ${totalPages} page(s) in ${((end - start) / 1000).toFixed(2)}s`,
+      lumaLog.info(
+        `[Luma] Background hydration: merged ${merged.length} records across ${totalPages} page(s) in ${((performance.now() - start) / 1000).toFixed(2)}s`,
       );
     } catch (err) {
-      console.warn('[Luma] Background pagination failed — keeping first-page slice:', err);
+      lumaLog.warn('[Luma] Background pagination failed — keeping first-page slice:', err);
       queryClient.setQueryData(MARKETING_DATA_QUERY_KEY, (prev: MarketingDatasetLoadResult | undefined) => {
         if (!prev) return prev;
-        return { ...prev, loadState: 'complete' };
+        return {
+          ...prev,
+          loadState: 'complete',
+          fetchError: formatFetchError(err),
+        };
       });
     }
   })();
@@ -129,37 +171,42 @@ function scheduleRemainingPages(
 
 async function fetchAllPagesBlocking(): Promise<{ records: MarketingRecord[]; dropped: number }> {
   const start = performance.now();
+  const baseUrl = getMarketingApiBaseUrl();
 
-  const res = await fetch(`${API_BASE}?page=1&limit=${PAGINATION_LIMIT}`);
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
-  const firstPageJson = await res.json();
+  const first = await fetchMarketingApiPage(1, PAGINATION_LIMIT, baseUrl);
+  const totalPages = first.pagination?.total_pages ?? 1;
 
-  const firstPageRaw: unknown[] = Array.isArray(firstPageJson)
-    ? firstPageJson
-    : firstPageJson.data ?? firstPageJson.results ?? [];
-
-  if (firstPageRaw.length === 0) throw new Error('No data returned');
-
-  const totalPages = firstPageJson.pagination?.total_pages ?? 1;
-  let allRaw: unknown[] = [...firstPageRaw];
+  let allRaw: unknown[] = [...first.rows];
   if (totalPages > 1) {
     const restRaw = await fetchInChunks(totalPages);
     allRaw = allRaw.concat(restRaw);
   }
 
   const normalized = normalizeRecords(allRaw);
-  const meta = firstPageJson.pagination;
-  console.log(
+  const meta = first.pagination;
+  lumaLog.info(
     `[Luma] Fetched ${normalized.records.length} records across ${totalPages} page(s) in ${((performance.now() - start) / 1000).toFixed(2)}s` +
       (meta ? ` (API total_records=${meta.total_records ?? 'n/a'}, page_size=${meta.page_size ?? PAGINATION_LIMIT})` : ''),
   );
   if (meta && typeof meta.total_records === 'number' && meta.total_records !== normalized.records.length) {
-    console.warn(
+    lumaLog.warn(
       `[Luma] Record count mismatch — API advertised ${meta.total_records} total_records but we received ${normalized.records.length}. Pagination may be incomplete.`,
     );
   }
 
   return normalized;
+}
+
+function mockFallback(apiError: unknown): MarketingDatasetLoadResult {
+  const fetchError = formatFetchError(apiError);
+  lumaLog.warn('[Luma] Using demo data — live API unavailable:', fetchError);
+  return {
+    records: generateMockData(),
+    source: 'mock',
+    droppedDuringNormalization: 0,
+    loadState: 'complete',
+    fetchError,
+  };
 }
 
 /**
@@ -170,27 +217,24 @@ async function fetchAllPagesBlocking(): Promise<{ records: MarketingRecord[]; dr
 export async function fetchMarketingDataset(queryClient: QueryClient): Promise<MarketingDatasetLoadResult> {
   const cached = await getCache<MarketingRecord[]>(CACHE_KEY);
   if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
-    console.log('[Luma] Loading from IndexedDB Cache');
+    lumaLog.info('[Luma] Loading from IndexedDB Cache');
     const { records, dropped } = normalizeRecords(cached.data);
-    return { records, source: 'cached', droppedDuringNormalization: dropped, loadState: 'complete' };
+    return {
+      records,
+      source: 'cached',
+      droppedDuringNormalization: dropped,
+      loadState: 'complete',
+      fetchError: null,
+    };
   }
 
   try {
-    const res = await fetch(`${API_BASE}?page=1&limit=${PAGINATION_LIMIT}`);
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
-    const firstPageJson = await res.json();
-
-    const firstPageRaw: unknown[] = Array.isArray(firstPageJson)
-      ? firstPageJson
-      : firstPageJson.data ?? firstPageJson.results ?? [];
-
-    if (firstPageRaw.length === 0) throw new Error('No data returned');
-
-    const totalPages = firstPageJson.pagination?.total_pages ?? 1;
-    const { records, dropped } = normalizeRecords(firstPageRaw);
+    const first = await fetchMarketingApiPage(1, PAGINATION_LIMIT);
+    const totalPages = first.pagination?.total_pages ?? 1;
+    const { records, dropped } = normalizeRecords(first.rows);
 
     if (totalPages > 1) {
-      console.log(
+      lumaLog.info(
         `[Luma] Fast path: showing ${records.length} rows while fetching ${totalPages - 1} more page(s) in background`,
       );
       scheduleRemainingPages(queryClient, totalPages, records, dropped);
@@ -199,32 +243,38 @@ export async function fetchMarketingDataset(queryClient: QueryClient): Promise<M
         source: 'api',
         droppedDuringNormalization: dropped,
         loadState: 'partial',
+        fetchError: null,
       };
     }
 
-    const meta = firstPageJson.pagination;
-    console.log(
+    lumaLog.info(
       `[Luma] Fetched ${records.length} records (single page)` +
-        (meta ? ` (API total_records=${meta.total_records ?? 'n/a'})` : ''),
+        (first.pagination ? ` (API total_records=${first.pagination.total_records ?? 'n/a'})` : ''),
     );
 
-    setCache(CACHE_KEY, records).catch(err => console.error('Cache save failed:', err));
+    setCache(CACHE_KEY, records).catch(err => lumaLog.error('Cache save failed:', err));
 
     return {
       records,
       source: 'api',
       droppedDuringNormalization: dropped,
       loadState: 'complete',
+      fetchError: null,
     };
   } catch (err) {
-    console.warn('API fast path failed, trying full blocking fetch / mock:', err);
+    lumaLog.warn('[Luma] API fast path failed:', err);
     try {
       const { records, dropped } = await fetchAllPagesBlocking();
-      setCache(CACHE_KEY, records).catch(e => console.error('Cache save failed:', e));
-      return { records, source: 'api', droppedDuringNormalization: dropped, loadState: 'complete' };
+      setCache(CACHE_KEY, records).catch(e => lumaLog.error('Cache save failed:', e));
+      return {
+        records,
+        source: 'api',
+        droppedDuringNormalization: dropped,
+        loadState: 'complete',
+        fetchError: null,
+      };
     } catch (err2) {
-      console.warn('API/Cache unavailable, using mock data:', err2);
-      return { records: generateMockData(), source: 'mock', droppedDuringNormalization: 0, loadState: 'complete' };
+      return mockFallback(err2);
     }
   }
 }

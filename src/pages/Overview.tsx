@@ -17,7 +17,7 @@ import { useAppContext } from '@/contexts/AppContext';
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
 
 export default function Overview() {
-  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource, boundaries, isDatasetHydrating } = useMarketingData({ includeGlobalAggregate: true });
+  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource, boundaries, isDatasetHydrating, fetchError } = useMarketingData({ includeGlobalAggregate: true });
   const { dateFilter } = useAppContext();
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
@@ -210,6 +210,28 @@ export default function Overview() {
           Export CSV
         </button>
       </div>
+      {dataSource === 'mock' && fetchError && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: 16,
+            padding: '12px 16px',
+            borderRadius: 10,
+            border: '1px solid rgba(251, 191, 36, 0.35)',
+            backgroundColor: 'rgba(251, 191, 36, 0.08)',
+            fontFamily: 'Plus Jakarta Sans',
+            fontSize: 13,
+            color: 'var(--text-primary)',
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ display: 'block', marginBottom: 4, color: '#FBBF24' }}>Live API unavailable — showing demo data</strong>
+          {fetchError}
+          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+            Set <code style={{ fontSize: 11 }}>VITE_MARKETING_API_URL</code> in <code style={{ fontSize: 11 }}>.env</code> to point at a working JSON endpoint (see <code style={{ fontSize: 11 }}>.env.example</code>).
+          </span>
+        </div>
+      )}
       <div style={{ borderBottom: '1px solid var(--border-subtle)', marginBottom: 20 }} />
 
       {/* Main grid */}
