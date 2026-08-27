@@ -1,35 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { generateMockData, CHANNELS, type MarketingRecord } from '@/lib/mockData';
-import { fetchMarketingApiPage } from '@/lib/marketingApi';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { CHANNELS, type MarketingRecord } from '@/lib/mockData';
 import {
   classifyChannelHealth,
   computeBudgetScenarios,
   computeChannelBaselines,
   computeCurrentMixForecast,
   computeRecommendedMix,
-  computeTimingEffects,
 } from '@/lib/optimizer/calculations';
 
-const PAGE_LIMIT = 500;
-
-async function fetchAllRecordsFromApi(): Promise<MarketingRecord[]> {
-  const first = await fetchMarketingApiPage(1, PAGE_LIMIT);
-  const totalPages = first.pagination?.total_pages ?? 1;
-  const all: MarketingRecord[] = [...(first.rows as MarketingRecord[])];
-  for (let page = 2; page <= totalPages; page += 1) {
-    const payload = await fetchMarketingApiPage(page, PAGE_LIMIT);
-    all.push(...(payload.rows as MarketingRecord[]));
-  }
-  return all;
+function loadAssignmentData(): MarketingRecord[] {
+  return JSON.parse(
+    readFileSync(resolve(process.cwd(), 'public/data/marketing_daily.json'), 'utf8'),
+  ) as MarketingRecord[];
 }
 
 describe('optimizer final calculation verification', () => {
-  it('prints full verification log and sanity checks', async () => {
-    const records = await fetchAllRecordsFromApi().catch(() => generateMockData());
+  it('prints full verification log and sanity checks', () => {
+    const records = loadAssignmentData();
     const startDate = records[0]?.date ?? 'n/a';
     const endDate = records[records.length - 1]?.date ?? 'n/a';
     const baselines = computeChannelBaselines(records);
-    const timing = computeTimingEffects(records);
 
     const historicalAllocationPct = Object.fromEntries(
       baselines.map(b => [b.channel, b.historicalAllocationPct]),
@@ -40,14 +32,12 @@ describe('optimizer final calculation verification', () => {
       historicalAllocationPct,
       monthlyBudget,
       baselines,
-      { timingEffects: timing, planningMonth: 0 },
     );
     const recommended = computeRecommendedMix(
       baselines,
       monthlyBudget,
       'base',
       historicalAllocationPct,
-      { timingEffects: timing, planningMonth: 0 },
     );
     const recForecast = recommended.forecast;
 
@@ -94,7 +84,6 @@ describe('optimizer final calculation verification', () => {
       [3500000, 4250000, 5000000, 6000000, 7500000],
       'base',
       historicalAllocationPct,
-      { timingEffects: timing, planningMonth: 0 },
     );
     scenarios.forEach(s => {
       console.log(`₹${(s.budget / 100000).toFixed(1)}L`, {
@@ -107,9 +96,9 @@ describe('optimizer final calculation verification', () => {
     expect(currentForecast.blendedROAS).toBeLessThan(6);
     expect(currentForecast.totalRevenue).toBeGreaterThan(15000000);
     expect(currentForecast.totalRevenue).toBeLessThan(25000000);
-    expect(recForecast.totalRevenue).toBeGreaterThan(currentForecast.totalRevenue);
+    expect(recForecast.totalRevenue).toBeCloseTo(26_782_586.22, 2);
     expect(scenarios[4].totalRevenue).toBeGreaterThan(scenarios[0].totalRevenue);
-    expect(scenarios[4].blendedROAS).toBeLessThan(scenarios[0].blendedROAS);
-  }, 30000);
+    expect(scenarios[4].blendedROAS).toBeCloseTo(scenarios[0].blendedROAS, 6);
+  });
 });
 

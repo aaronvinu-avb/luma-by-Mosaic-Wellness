@@ -3,15 +3,19 @@ import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { DeferredRender } from '@/components/DeferredRender';
 import { ChannelName } from '@/components/ChannelName';
-import { getChannelSummaries, getMonthlyAggregation, getChannelSaturationModels, getOptimalAllocationNonLinear, projectRevenue, getTimeFrameMonths, getSeasonalityMetrics } from '@/lib/calculations';
+import { getChannelSummaries, getMonthlyAggregation, getTimeFrameMonths } from '@/lib/calculations';
 import { formatINR, formatINRCompact, formatROAS } from '@/lib/formatCurrency';
-import { parseLocalDate } from '@/lib/dataBoundaries';
 import { CHANNELS } from '@/lib/mockData';
 import { MiniSparkline } from '@/components/MiniSparkline';
 import { Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/exportData';
 import { Link } from 'react-router-dom';
-
+import { DEFAULT_MONTHLY_BUDGET } from '@/contexts/OptimizerContext';
+import {
+  computeChannelBaselines,
+  computeCurrentMixForecast,
+  computeRecommendedMix,
+} from '@/lib/optimizer/calculations';
 import { useAppContext } from '@/contexts/AppContext';
 
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
@@ -71,44 +75,29 @@ export default function Overview() {
     };
   }, [globalAggregate, dateFilter]);
 
-  const models = useMemo(() => (globalAggregate || aggregate || data) ? getChannelSaturationModels(globalAggregate || aggregate || data!) : [], [data, aggregate, globalAggregate]);
-
   const timeFrameMonths = useMemo(() => getTimeFrameMonths(aggregate || data || []), [data, aggregate]);
 
-  const avgMonthlySpend = totals.spend / (timeFrameMonths || 1);
-
   const opportunityGap = useMemo(() => {
-    if (models.length === 0 || avgMonthlySpend === 0) return 0;
-
-    // Seasonality anchor: the month we're projecting for. We use the month of
-    // the latest AVAILABLE data date (not `Date.now()`), so that a stale
-    // dataset never pulls in an unrelated calendar month's seasonality index.
-    const activeMonth = boundaries
-      ? parseLocalDate(boundaries.latestDate).getMonth()
-      : new Date().getMonth();
-    const seasonality = getSeasonalityMetrics(globalAggregate || data || []);
-    const getMultiplier = (ch: string) => {
-      if (dateFilter !== 'last30') return 1.0;
-      const sea = seasonality.find(s => s.channel === ch);
-      return sea?.monthlyIndex?.[activeMonth] ?? 1.0;
-    };
-
-    // Apples-to-apples baseline: how much does the model project we get for our CURRENT spend allocation?
-    const currentModelRevenue = (summaries || []).reduce((s, chSummary) => {
-      const m = (models || []).find(x => x.channel === chSummary.channel);
-      const chMonthlySpend = (chSummary.totalSpend || 0) / timeFrameMonths;
-      return s + (m ? projectRevenue(m, chMonthlySpend, getMultiplier(chSummary.channel)) : 0);
-    }, 0);
-
-    // Optimal allocation projection
-    const optFractions = getOptimalAllocationNonLinear(models || [], avgMonthlySpend);
-    const optRevenue = CHANNELS.reduce((s, ch) => {
-      const m = (models || []).find(x => x.channel === ch);
-      return s + (m ? projectRevenue(m, (optFractions[ch] || 0) * avgMonthlySpend, getMultiplier(ch)) : 0);
-    }, 0);
-    
-    return Math.max(0, optRevenue - currentModelRevenue);
-  }, [models, avgMonthlySpend, summaries, timeFrameMonths, globalAggregate, data, dateFilter, boundaries]);
+    const source = globalAggregate || aggregate;
+    if (!source) return 0;
+    const baselines = computeChannelBaselines(source);
+    if (baselines.length === 0) return 0;
+    const historicalAllocationPct = Object.fromEntries(
+      baselines.map(b => [b.channel, b.historicalAllocationPct]),
+    ) as Record<string, number>;
+    const current = computeCurrentMixForecast(
+      historicalAllocationPct,
+      DEFAULT_MONTHLY_BUDGET,
+      baselines,
+    );
+    const recommended = computeRecommendedMix(
+      baselines,
+      DEFAULT_MONTHLY_BUDGET,
+      'base',
+      historicalAllocationPct,
+    );
+    return Math.max(0, recommended.forecast.totalRevenue - current.totalRevenue);
+  }, [globalAggregate, aggregate]);
 
   const sorted = useMemo(() =>
     summaries.map((s, i) => ({ ...s, color: ORBIT_COLORS[i], origIdx: i }))

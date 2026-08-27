@@ -30,8 +30,8 @@ describe('marketing_daily.json dataset audit', () => {
     }
 
     const dates = new Set(raw.map(r => r.date));
-    expect(dates.has('2025-12-31')).toBe(true);
-    expect(raw.length).toBe(10_960); // 1096 days × 10 channels
+    expect(dates.has('2025-12-31')).toBe(false);
+    expect(raw.length).toBe(10_950); // 1095 days × 10 channels
 
     const mock = generateMockData();
     const sameAsMock = raw.length === mock.length && raw[0].spend === mock[0].spend;

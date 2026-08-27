@@ -114,6 +114,145 @@ function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value));
 }
 
+/** Operational monthly spend caps from the assignment brief. */
+export const CHANNEL_SPEND_CAPS: Record<string, number> = {
+  Email: 1_500_000,
+  SMS: 1_200_000,
+};
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function rupeesToPct(alloc: Record<string, number>, budget: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  const safeBudget = Math.max(0, budget);
+  for (const ch of CHANNELS) {
+    out[ch] = safeBudget > 0 ? (Math.max(0, alloc[ch] || 0) / safeBudget) * 100 : 0;
+  }
+  return out;
+}
+
+/**
+ * Allocate `budget` in proportion to each channel's average ROAS, then
+ * water-fill so Email ≤ ₹15L and SMS ≤ ₹12L. Leftover after a cap is
+ * redistributed to uncapped channels by the same ROAS weights.
+ */
+export function allocateBudgetByAverageRoas(
+  budget: number,
+  roasByChannel: Record<string, number>,
+  caps: Record<string, number> = CHANNEL_SPEND_CAPS,
+): Record<string, number> {
+  const alloc: Record<string, number> = {};
+  CHANNELS.forEach(ch => {
+    alloc[ch] = 0;
+  });
+  const locked = new Set<string>();
+  let remaining = Math.max(0, budget);
+
+  for (let iter = 0; iter < CHANNELS.length + 3; iter += 1) {
+    const free = CHANNELS.filter(ch => !locked.has(ch));
+    if (free.length === 0 || remaining <= 1e-9) break;
+
+    const weightSum = free.reduce((s, ch) => s + Math.max(0, roasByChannel[ch] || 0), 0);
+    let overflow = false;
+
+    if (weightSum <= 0) {
+      const even = remaining / free.length;
+      for (const ch of free) {
+        const cap = caps[ch];
+        if (cap != null && even > cap + 1e-9) {
+          alloc[ch] = cap;
+          locked.add(ch);
+          overflow = true;
+        }
+      }
+      if (overflow) {
+        remaining = Math.max(0, budget - CHANNELS.reduce((s, ch) => s + alloc[ch], 0));
+        continue;
+      }
+      for (const ch of free) alloc[ch] = even;
+      remaining = 0;
+      break;
+    }
+
+    for (const ch of free) {
+      const proposed = remaining * (Math.max(0, roasByChannel[ch] || 0) / weightSum);
+      const cap = caps[ch];
+      if (cap != null && proposed > cap + 1e-9) {
+        alloc[ch] = cap;
+        locked.add(ch);
+        overflow = true;
+      }
+    }
+
+    if (overflow) {
+      remaining = Math.max(0, budget - CHANNELS.reduce((s, ch) => s + alloc[ch], 0));
+      continue;
+    }
+
+    for (const ch of free) {
+      alloc[ch] = remaining * (Math.max(0, roasByChannel[ch] || 0) / weightSum);
+    }
+    remaining = 0;
+    break;
+  }
+
+  const drift = budget - CHANNELS.reduce((s, ch) => s + alloc[ch], 0);
+  if (Math.abs(drift) > 1e-6) {
+    const receivers = CHANNELS
+      .filter(ch => {
+        const cap = caps[ch];
+        const room = cap != null ? cap - alloc[ch] : Infinity;
+        return room > 1e-9;
+      })
+      .sort((a, b) => (roasByChannel[b] || 0) - (roasByChannel[a] || 0));
+    let leftover = drift;
+    for (const ch of receivers) {
+      if (Math.abs(leftover) <= 1e-9) break;
+      const cap = caps[ch];
+      const room = cap != null ? cap - alloc[ch] : Infinity;
+      const take = leftover > 0 ? Math.min(room, leftover) : Math.max(-alloc[ch], leftover);
+      alloc[ch] += take;
+      leftover -= take;
+    }
+  }
+
+  return alloc;
+}
+
+function enforceCapsOnSpend(
+  seedSpend: Record<string, number>,
+  budget: number,
+  roasByChannel: Record<string, number>,
+  caps: Record<string, number> = CHANNEL_SPEND_CAPS,
+): Record<string, number> {
+  const clipped: Record<string, number> = {};
+  CHANNELS.forEach(ch => {
+    const cap = caps[ch];
+    const raw = Math.max(0, seedSpend[ch] || 0);
+    clipped[ch] = cap != null ? Math.min(raw, cap) : raw;
+  });
+  const used = CHANNELS.reduce((s, ch) => s + clipped[ch], 0);
+  if (used >= budget - 1e-6) {
+    if (used <= 0) return allocateBudgetByAverageRoas(budget, roasByChannel, caps);
+    const scale = budget / used;
+    CHANNELS.forEach(ch => {
+      clipped[ch] *= scale;
+    });
+    return clipped;
+  }
+  const leftover = budget - used;
+  const extra = allocateBudgetByAverageRoas(leftover, roasByChannel, {
+    Email: Math.max(0, (caps.Email ?? Infinity) - clipped.Email),
+    SMS: Math.max(0, (caps.SMS ?? Infinity) - clipped.SMS),
+  });
+  CHANNELS.forEach(ch => {
+    clipped[ch] += extra[ch] || 0;
+  });
+  return clipped;
+}
+
 function normalizePct(input: Record<string, number>): Record<string, number> {
   const out: Record<string, number> = {};
   let sum = 0;
@@ -146,17 +285,6 @@ function normalizeToShares(input: Record<string, number>): Record<string, number
   }
   for (const ch of CHANNELS) out[ch] = out[ch] / sum;
   return out;
-}
-
-function solveSpendAtMarginalROAS(curve: FittedCurve, threshold: number): number {
-  if (!Number.isFinite(curve.a) || !Number.isFinite(curve.b) || curve.a <= 0 || curve.b <= 0 || curve.b >= 1 || threshold <= 0) {
-    return Infinity;
-  }
-  const base = threshold / (curve.a * curve.b);
-  if (base <= 0) return Infinity;
-  const exponent = 1 / (curve.b - 1);
-  const spend = Math.pow(base, exponent);
-  return Number.isFinite(spend) && spend > 0 ? spend : Infinity;
 }
 
 function monthlyPointsForChannel(state: AggregatedState, channel: string): MonthlyPoint[] {
@@ -337,33 +465,6 @@ export function computeTimingEffects(rawData: StateInput): TimingEffects {
   return { byChannel };
 }
 
-function channelTimingModifier(
-  channel: string,
-  timingEffects: TimingEffects | undefined,
-  planningMonth: number | null | undefined,
-): number {
-  if (!timingEffects || planningMonth == null || planningMonth < 0 || planningMonth > 11) return 1;
-  const t = timingEffects.byChannel[channel];
-  if (!t) return 1;
-  if (t.monthlyStrength === 'weak') return 1;
-  const monthIndex = t.monthlyIndex[planningMonth] ?? 1;
-  return 0.8 + 0.2 * monthIndex;
-}
-
-function curveRevenueAtSpend(curve: FittedCurve, spend: number): number {
-  if (!Number.isFinite(spend) || spend <= 0) return 0;
-  const { a, b } = curve;
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return 0;
-  return a * Math.pow(spend, b);
-}
-
-function curveMarginalROAS(curve: FittedCurve, spend: number): number {
-  if (!Number.isFinite(spend) || spend <= 0) return 0;
-  const { a, b } = curve;
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return 0;
-  return a * b * Math.pow(spend, b - 1);
-}
-
 export function classifyChannelHealth(
   baseline: ChannelBaseline,
   budget: number,
@@ -371,34 +472,24 @@ export function classifyChannelHealth(
   portfolioBlendedROAS: number,
 ): HealthClassification {
   const currentSpend = (Math.max(0, allocationPct) / 100) * Math.max(0, budget);
+  const cap = CHANNEL_SPEND_CAPS[baseline.channel];
   const lowerEfficientSpend = baseline.avgMonthlySpend * 0.5;
-  const threshold = Math.max(1, portfolioBlendedROAS * 0.6);
-  const solvedUpper = solveSpendAtMarginalROAS(baseline.curve, threshold);
-  const upperEfficientSpend = Number.isFinite(solvedUpper) ? solvedUpper : baseline.avgMonthlySpend * 2.0;
-  const saturationSpendSolved = solveSpendAtMarginalROAS(baseline.curve, 1.0);
-  const saturationSpend = Number.isFinite(saturationSpendSolved) ? saturationSpendSolved : baseline.avgMonthlySpend * 2.5;
-  const marginalROAS = curveMarginalROAS(baseline.curve, Math.max(currentSpend, 1));
+  const upperEfficientSpend = cap != null ? cap : baseline.avgMonthlySpend * 2.0;
+  const saturationSpend = cap != null ? cap : Infinity;
+  const marginalROAS = baseline.historicalROAS;
 
   let status: ChannelHealthStatus = 'efficient';
-  if (currentSpend >= saturationSpend * 0.7) status = 'saturated';
-  else if (currentSpend > upperEfficientSpend && currentSpend < saturationSpend) status = 'over-scaled';
-  else if (currentSpend < lowerEfficientSpend) status = 'under-scaled';
-  else status = 'efficient';
-
-  // Portfolio-relative overrides (order matters)
-  // 1) High historical efficiency vs portfolio but starved budget share → under-invested
-  if (
+  if (cap != null && currentSpend >= cap - 1e-6) {
+    status = 'saturated';
+  } else if (
     portfolioBlendedROAS > 0 &&
     baseline.historicalROAS > 1.5 * portfolioBlendedROAS &&
     allocationPct < 5
   ) {
     status = 'under-scaled';
-  } else if (baseline.historicalROAS < 1.8) {
-    // 2) Weak historical ROAS → saturated (near breakeven; do not label as over-weighted)
-    status = 'saturated';
-  } else if (baseline.historicalROAS < 1.5 && allocationPct > 10) {
+  } else if (baseline.historicalROAS < 1.8 && allocationPct > 10) {
     status = 'over-scaled';
-  } else if (baseline.historicalROAS > 10 && allocationPct < 8) {
+  } else if (currentSpend < lowerEfficientSpend && baseline.historicalROAS > portfolioBlendedROAS) {
     status = 'under-scaled';
   }
 
@@ -421,6 +512,7 @@ export function computeCurrentMixForecast(
     planningMonth?: number | null;
   },
 ): MixForecast {
+  void options;
   const allocationsPct = normalizePct(allocationsPctInput);
   const safeBudget = Math.max(0, budget);
   const channels: Record<string, ForecastChannelRow> = {};
@@ -451,18 +543,10 @@ export function computeCurrentMixForecast(
 
     const allocationPct = allocationsPct[ch] || 0;
     const forecastSpend = (allocationPct / 100) * safeBudget;
-    const timeModifier = channelTimingModifier(ch, options?.timingEffects, options?.planningMonth);
-    let forecastRevenue = curveRevenueAtSpend(baseline.curve, forecastSpend) * timeModifier;
-
-    // Fallback proxy (required by spec) if curve fit is degenerate.
-    if (!Number.isFinite(forecastRevenue) || forecastRevenue <= 0) {
-      const spendRatio = baseline.avgMonthlySpend > 0 ? forecastSpend / baseline.avgMonthlySpend : 0;
-      forecastRevenue = baseline.avgMonthlyRevenue * Math.pow(Math.max(spendRatio, 0), 0.7);
-    }
-
-    const marginalROAS = curveMarginalROAS(baseline.curve, Math.max(forecastSpend, 1)) * timeModifier;
+    const forecastRevenue = forecastSpend * Math.max(0, baseline.historicalROAS);
     const health = classifyChannelHealth(baseline, safeBudget, allocationPct, historicalPortfolioROAS);
     const forecastROAS = forecastSpend > 0 ? forecastRevenue / forecastSpend : 0;
+    const marginalROAS = baseline.historicalROAS;
 
     channels[ch] = {
       channel: ch,
@@ -481,69 +565,9 @@ export function computeCurrentMixForecast(
   return {
     channels,
     totalSpend: safeBudget,
-    totalRevenue,
-    blendedROAS: safeBudget > 0 ? totalRevenue / safeBudget : 0,
+    totalRevenue: round2(totalRevenue),
+    blendedROAS: safeBudget > 0 ? round2(totalRevenue) / safeBudget : 0,
   };
-}
-
-function applyBoundsAndNormalize(
-  rawPct: Record<string, number>,
-  activeChannels: string[],
-  minPct = 2,
-  maxPct = 35,
-): Record<string, number> {
-  const bounded: Record<string, number> = {};
-  CHANNELS.forEach(ch => {
-    bounded[ch] = activeChannels.includes(ch) ? clamp(rawPct[ch] || 0, minPct, maxPct) : 0;
-  });
-
-  for (let iter = 0; iter < 80; iter += 1) {
-    const activeTotal = activeChannels.reduce((s, ch) => s + bounded[ch], 0);
-    const diff = 100 - activeTotal;
-    if (Math.abs(diff) < 1e-6) break;
-
-    if (diff > 0) {
-      const room = activeChannels.map(ch => ({ ch, room: Math.max(0, maxPct - bounded[ch]) }));
-      const totalRoom = room.reduce((s, r) => s + r.room, 0);
-      if (totalRoom <= 0) break;
-      room.forEach(r => {
-        if (r.room <= 0) return;
-        bounded[r.ch] += (diff * r.room) / totalRoom;
-      });
-    } else {
-      const removable = activeChannels.map(ch => ({ ch, room: Math.max(0, bounded[ch] - minPct) }));
-      const totalRemovable = removable.reduce((s, r) => s + r.room, 0);
-      if (totalRemovable <= 0) break;
-      removable.forEach(r => {
-        if (r.room <= 0) return;
-        bounded[r.ch] += (diff * r.room) / totalRemovable;
-      });
-    }
-
-    activeChannels.forEach(ch => {
-      bounded[ch] = clamp(bounded[ch], minPct, maxPct);
-    });
-  }
-
-  const sum = activeChannels.reduce((s, ch) => s + bounded[ch], 0);
-  if (sum > 0) {
-    activeChannels.forEach(ch => {
-      bounded[ch] = (bounded[ch] / sum) * 100;
-    });
-  }
-
-  // Deterministic final correction to hit 100.00 exactly.
-  const rounded: Record<string, number> = {};
-  CHANNELS.forEach(ch => {
-    rounded[ch] = activeChannels.includes(ch) ? Number(bounded[ch].toFixed(4)) : 0;
-  });
-  const roundedSum = activeChannels.reduce((s, ch) => s + rounded[ch], 0);
-  const adjust = 100 - roundedSum;
-  if (activeChannels.length > 0 && Math.abs(adjust) > 1e-8) {
-    const anchor = [...activeChannels].sort((a, b) => rounded[b] - rounded[a])[0];
-    rounded[anchor] = Number((rounded[anchor] + adjust).toFixed(4));
-  }
-  return rounded;
 }
 
 export function computeRecommendedMix(
@@ -556,55 +580,38 @@ export function computeRecommendedMix(
     planningMonth?: number | null;
   },
 ): RecommendedMixOutput {
+  void options;
   const currentAllocationPct = normalizePct(currentAllocationPctInput);
-  const activeChannels = baselines.filter(b => b.activeMonths > 0).map(b => b.channel);
-  const explorationFactor = mode === 'conservative' ? 0.25 : mode === 'aggressive' ? 1.0 : 0.6;
+  const safeBudget = Math.max(0, budget);
 
-  const totalHistSpend = baselines.reduce((s, b) => s + b.totalSpend, 0);
-  const totalHistRev = baselines.reduce((s, b) => s + b.totalRevenue, 0);
-  const portfolioHistoricalROAS = totalHistSpend > 0 ? totalHistRev / totalHistSpend : 0;
-
-  const efficiencyScore: Record<string, number> = {};
+  const roasByChannel: Record<string, number> = {};
   const weightedEfficiency: Record<string, number> = {};
   for (const ch of CHANNELS) {
     const baseline = baselines.find(b => b.channel === ch);
-    if (!baseline || !activeChannels.includes(ch)) {
-      efficiencyScore[ch] = 0;
-      weightedEfficiency[ch] = 0;
-      continue;
-    }
-    const currentSpend = (currentAllocationPct[ch] / 100) * budget;
-    const timingModifier = channelTimingModifier(ch, options?.timingEffects, options?.planningMonth);
-    const marginal = curveMarginalROAS(baseline.curve, Math.max(currentSpend, 1)) * timingModifier;
-    const confidence = 1 / (1 + Math.max(0, baseline.monthlyROASCV));
-    efficiencyScore[ch] = marginal;
-    let weighted = marginal * confidence;
-    // Strong historical efficiency vs portfolio but current share &lt; 5% → prioritize reallocation (e.g. Email)
-    if (
-      portfolioHistoricalROAS > 0 &&
-      baseline.historicalROAS > 1.5 * portfolioHistoricalROAS &&
-      currentAllocationPct[ch] < 5
-    ) {
-      weighted *= 1.85;
-    }
-    weightedEfficiency[ch] = weighted;
+    const roas = baseline && baseline.activeMonths > 0 ? Math.max(0, baseline.historicalROAS) : 0;
+    roasByChannel[ch] = roas;
+    weightedEfficiency[ch] = roas;
   }
 
-  const weightedSum = CHANNELS.reduce((s, ch) => s + weightedEfficiency[ch], 0);
-  const efficiencyAllocationPct: Record<string, number> = {};
+  const officialSpend = allocateBudgetByAverageRoas(safeBudget, roasByChannel, CHANNEL_SPEND_CAPS);
+  const efficiencyAllocationPct = rupeesToPct(officialSpend, safeBudget);
+
+  // Base and aggressive: scored brief method. Conservative: keep 75% of current mix.
+  const explorationFactor = mode === 'conservative' ? 0.25 : 1;
+
+  const seedSpend: Record<string, number> = {};
   CHANNELS.forEach(ch => {
-    efficiencyAllocationPct[ch] = weightedSum > 0 ? (weightedEfficiency[ch] / weightedSum) * 100 : 100 / CHANNELS.length;
+    const currentSpend = ((currentAllocationPct[ch] || 0) / 100) * safeBudget;
+    seedSpend[ch] = currentSpend * (1 - explorationFactor) + officialSpend[ch] * explorationFactor;
   });
 
-  const rawRecommendedPct: Record<string, number> = {};
-  CHANNELS.forEach(ch => {
-    rawRecommendedPct[ch] =
-      currentAllocationPct[ch] * (1 - explorationFactor) +
-      efficiencyAllocationPct[ch] * explorationFactor;
-  });
+  const recommendedSpend =
+    explorationFactor >= 1
+      ? officialSpend
+      : enforceCapsOnSpend(seedSpend, safeBudget, roasByChannel, CHANNEL_SPEND_CAPS);
 
-  const allocationsPct = applyBoundsAndNormalize(rawRecommendedPct, activeChannels, 2, 35);
-  const forecast = computeCurrentMixForecast(allocationsPct, budget, baselines, options);
+  const allocationsPct = rupeesToPct(recommendedSpend, safeBudget);
+  const forecast = computeCurrentMixForecast(allocationsPct, safeBudget, baselines);
 
   return {
     allocationsPct,
@@ -616,8 +623,7 @@ export function computeRecommendedMix(
 
 /**
  * Budget ladder at fixed **current mix** allocations (same as `computeCurrentMixForecast`).
- * Uses the same saturation curves and timing modifiers as the Mix Optimiser; does not
- * re-optimize allocations per tier (that would conflate scenario scale with recommended mix).
+ * Revenue scales linearly with spend × historical ROAS; Email/SMS caps apply only to recommended mix.
  */
 export function computeBudgetScenarios(
   baselines: ChannelBaseline[],

@@ -18,6 +18,7 @@ import {
   computeTimingEffects,
   classifyChannelHealth,
   computeBudgetScenarios,
+  CHANNEL_SPEND_CAPS,
   type ChannelBaseline,
   type TimingEffects,
 } from '@/lib/optimizer/calculations';
@@ -71,8 +72,10 @@ function makePlanSummary(
       marginalROAS: c?.marginalROAS ?? 0,
       seasonalityMultiplier: 1,
       dowMultiplier: 1,
-      isCapped: (c?.forecastSpend ?? 0) >= (c?.saturationSpend ?? Infinity) * 0.7,
-      capSpend: c?.saturationSpend ?? Infinity,
+      isCapped:
+        CHANNEL_SPEND_CAPS[ch] != null &&
+        (c?.forecastSpend ?? 0) >= CHANNEL_SPEND_CAPS[ch] - 1e-6,
+      capSpend: CHANNEL_SPEND_CAPS[ch] ?? c?.saturationSpend ?? Infinity,
     };
   }
   return {
@@ -88,7 +91,7 @@ function makePlanSummary(
 }
 
 function diagnosisReason(status: ChannelDiagnosis['status']): string {
-  if (status === 'saturated') return 'Marginal returns below breakeven';
+  if (status === 'saturated') return 'At operational monthly spend cap';
   if (status === 'over-scaled') return 'Allocation appears above efficient range';
   if (status === 'under-scaled') return 'High efficiency, under-invested';
   return 'Efficient allocation';
@@ -262,13 +265,16 @@ export function useOptimizerModel(): OptimizerModelOutput {
             marginalROAS: 0,
           };
       const reasonCode = diagnosisReason(health.status);
+      const capRupees = CHANNEL_SPEND_CAPS[ch];
       const explanation =
-        health.status === 'saturated'
-          ? `${ch} is nearing saturation. Marginal ROAS is ${health.marginalROAS.toFixed(2)}x, so extra spend now produces weaker return.`
+        health.status === 'saturated' && capRupees
+          ? `${ch} is at its operational monthly cap of ₹${(capRupees / 100000).toFixed(0)}L. List size limits further spend.`
+          : health.status === 'saturated'
+            ? `${ch} is at an operational spend cap.`
           : health.status === 'over-scaled'
             ? `${ch} is above its efficient spend band. Reallocating some budget can improve blended ROAS.`
             : health.status === 'under-scaled'
-              ? `${ch} is under-invested versus its efficiency profile. It has headroom before saturation.`
+              ? `${ch} is under-invested versus its historical ROAS. It should receive a larger share of the monthly budget.`
               : `${ch} is within its efficient spend range.`;
       out[ch] = {
         channel: ch,
@@ -388,9 +394,9 @@ export function useOptimizerModel(): OptimizerModelOutput {
         isHighVolatility: volatilityScore > 0.5,
         saturationCurve: (b?.monthlyPoints || []).map(p => ({ spend: p.spend, roas: p.roas })),
         capSpend: curRow?.capSpend ?? Infinity,
-        capReason: Number.isFinite(curRow?.capSpend || Infinity)
-          ? `${ch} enters saturation near ${Math.round((curRow?.capSpend || 0) / 100000)}L monthly spend.`
-          : `${ch} does not show a clear saturation cap in observed history.`,
+        capReason: CHANNEL_SPEND_CAPS[ch]
+          ? `${ch} is capped at ₹${(CHANNEL_SPEND_CAPS[ch] / 100000).toFixed(0)}L per month.`
+          : `${ch} has no operational spend cap in the brief.`,
         isSaturated: diagnosis[ch]?.isSaturated ?? false,
         marginalROASAtCurrent: curRow?.marginalROAS || 0,
         marginalROASAtRecommended: recRow?.marginalROAS || 0,

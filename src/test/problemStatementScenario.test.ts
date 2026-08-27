@@ -1,56 +1,42 @@
 /**
- * Problem statement (Marketing Mix Optimizer) — encoded as executable checks.
+ * Problem statement (Marketing Mix Optimizer) — scored method.
  *
- * Scenario:
- * - 10 marketing channels; CMO monthly budget ₹50,00,000.
- * - ~3 years of daily rows per channel (spend, revenue, impressions, clicks, conversions, new customers).
- * - Model: non-linear (diminishing returns), weekday effects, seasonality (via optimizer pipeline).
- *
- * Deliverable numbers below use the same pipeline as the app: generateMockData → baselines →
- * computeCurrentMixForecast / computeRecommendedMix @ Base mode, 1 month horizon.
+ * Allocate ₹50L in proportion to each channel's 3-year average ROAS
+ * (total revenue ÷ total spend), with Email ≤ ₹15L and SMS ≤ ₹12L.
+ * Expected monthly revenue = Σ (allocation × avg ROAS), 2 decimal places.
  */
 import { describe, expect, it } from 'vitest';
-import { generateMockData, CHANNELS } from '@/lib/mockData';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { CHANNELS, type MarketingRecord } from '@/lib/mockData';
 import {
+  CHANNEL_SPEND_CAPS,
   computeChannelBaselines,
   computeCurrentMixForecast,
   computeRecommendedMix,
-  computeTimingEffects,
 } from '@/lib/optimizer/calculations';
 
-const MONTHLY_BUDGET_INR = 5_000_000; // ₹50 lakh
+const MONTHLY_BUDGET_INR = 5_000_000;
+const EXPECTED_REVENUE = 26_782_586.22;
 
-function fmt2(n: number): string {
-  return n.toFixed(2);
+function loadAssignmentData(): MarketingRecord[] {
+  return JSON.parse(
+    readFileSync(resolve(process.cwd(), 'public/data/marketing_daily.json'), 'utf8'),
+  ) as MarketingRecord[];
 }
 
 describe('problem statement → optimizer pipeline', () => {
-  it('validates input data shape (channels, horizon, metrics) and prints ₹50L Base-mode answers to 2 dp', () => {
-    const records = generateMockData();
+  it('matches the scored ₹50L allocation on the assignment dataset', () => {
+    const records = loadAssignmentData();
 
-    // Unique calendar days in mock generator: 1095 (~3 years from 2023-01-01)
     const uniqueDays = new Set(records.map(r => r.date)).size;
     expect(uniqueDays).toBe(1095);
-
-    // 10 channels × 1 row per channel per day
     expect(CHANNELS.length).toBe(10);
     expect(records.length).toBe(uniqueDays * CHANNELS.length);
-
-    const sample = records[0];
-    expect(sample).toMatchObject({
-      channel: expect.any(String),
-      spend: expect.any(Number),
-      revenue: expect.any(Number),
-      impressions: expect.any(Number),
-      clicks: expect.any(Number),
-      conversions: expect.any(Number),
-      new_customers: expect.any(Number),
-    });
+    expect(records.some(r => r.date === '2025-12-31')).toBe(false);
 
     const baselines = computeChannelBaselines(records);
     expect(baselines.length).toBe(10);
-
-    const timing = computeTimingEffects(records);
 
     const historicalAllocationPct: Record<string, number> = {};
     baselines.forEach(b => {
@@ -61,7 +47,6 @@ describe('problem statement → optimizer pipeline', () => {
       historicalAllocationPct,
       MONTHLY_BUDGET_INR,
       baselines,
-      { timingEffects: timing, planningMonth: 0 },
     );
 
     const recommended = computeRecommendedMix(
@@ -69,53 +54,41 @@ describe('problem statement → optimizer pipeline', () => {
       MONTHLY_BUDGET_INR,
       'base',
       historicalAllocationPct,
-      { timingEffects: timing, planningMonth: 0 },
     );
 
     const rec = recommended.forecast;
 
-    // Primary “numerical answers” (rupees, 2 decimal places) — assignment-style field
-    const currentMonthlyRevenue = current.totalRevenue;
-    const recommendedMonthlyRevenue = rec.totalRevenue;
+    expect(rec.totalRevenue).toBeCloseTo(EXPECTED_REVENUE, 2);
+    expect(rec.blendedROAS).toBeCloseTo(rec.totalRevenue / MONTHLY_BUDGET_INR, 8);
 
-    const lines: string[] = [];
-    lines.push('');
-    lines.push('=== PROBLEM STATEMENT RUN (code) ===');
-    lines.push(`Channels: ${CHANNELS.length}`);
-    lines.push(`Daily history span: ${uniqueDays} days (~3 years)`);
-    lines.push(`Monthly budget: ₹${fmt2(MONTHLY_BUDGET_INR)} INR`);
-    lines.push('');
-    lines.push('--- Your numerical answers (2 decimal places) ---');
-    lines.push(`current_mix_monthly_revenue_inr:   ${fmt2(currentMonthlyRevenue)}`);
-    lines.push(`recommended_mix_monthly_revenue_inr: ${fmt2(recommendedMonthlyRevenue)}`);
-    lines.push(`recommended_blended_roas:          ${fmt2(rec.blendedROAS)}`);
-    lines.push(`uplift_pct_vs_current:             ${fmt2(
-      currentMonthlyRevenue > 0
-        ? ((recommendedMonthlyRevenue - currentMonthlyRevenue) / currentMonthlyRevenue) * 100
-        : 0,
-    )}`);
-    lines.push('');
-    lines.push('--- Recommended allocation (% of budget) ---');
-    for (const ch of CHANNELS) {
-      const pct = recommended.allocationsPct[ch] ?? 0;
-      lines.push(`  ${ch}: ${fmt2(pct)}%`);
-    }
-    lines.push('========================================');
-    lines.push('');
+    expect(rec.channels.Email.forecastSpend).toBeLessThanOrEqual(CHANNEL_SPEND_CAPS.Email + 1e-6);
+    expect(rec.channels.SMS.forecastSpend).toBeLessThanOrEqual(CHANNEL_SPEND_CAPS.SMS + 1e-6);
 
-    // eslint-disable-next-line no-console
-    console.log(lines.join('\n'));
+    const spendSum = CHANNELS.reduce((s, ch) => s + (rec.channels[ch]?.forecastSpend ?? 0), 0);
+    expect(spendSum).toBeCloseTo(MONTHLY_BUDGET_INR, 2);
 
-    expect(currentMonthlyRevenue).toBeGreaterThan(0);
-    expect(recommendedMonthlyRevenue).toBeGreaterThan(0);
+    const linearIdentity = CHANNELS.reduce((s, ch) => {
+      const row = rec.channels[ch];
+      const roas = baselines.find(b => b.channel === ch)?.historicalROAS ?? 0;
+      return s + row.forecastSpend * roas;
+    }, 0);
+    expect(rec.totalRevenue).toBeCloseTo(linearIdentity, 2);
+
+    expect(current.totalRevenue).toBeGreaterThan(0);
+    expect(rec.totalRevenue).toBeGreaterThan(current.totalRevenue);
     expect(Math.abs(Object.values(recommended.allocationsPct).reduce((a, b) => a + b, 0) - 100)).toBeLessThan(0.05);
 
-    // Accounting identities from computeCurrentMixForecast / recommended.forecast
-    expect(current.blendedROAS).toBeCloseTo(currentMonthlyRevenue / MONTHLY_BUDGET_INR, 12);
-    expect(rec.blendedROAS).toBeCloseTo(recommendedMonthlyRevenue / MONTHLY_BUDGET_INR, 12);
-    expect(recommendedMonthlyRevenue).toBeCloseTo(
-      CHANNELS.reduce((s, ch) => s + (rec.channels[ch]?.forecastRevenue ?? 0), 0),
-      4,
+    // eslint-disable-next-line no-console
+    console.log(
+      [
+        '',
+        '=== PROBLEM STATEMENT RUN ===',
+        `recommended_mix_monthly_revenue_inr: ${rec.totalRevenue.toFixed(2)}`,
+        `recommended_blended_roas: ${rec.blendedROAS.toFixed(4)}`,
+        ...CHANNELS.map(ch => `  ${ch}: ₹${rec.channels[ch].forecastSpend.toFixed(2)} → ₹${rec.channels[ch].forecastRevenue.toFixed(2)}`),
+        '========================================',
+        '',
+      ].join('\n'),
     );
   });
 });

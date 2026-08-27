@@ -114,7 +114,7 @@ export default function RecommendedMix() {
             fontFamily: 'Plus Jakarta Sans', fontSize: 13, fontWeight: 400,
             color: 'var(--text-secondary)', margin: '5px 0 0', lineHeight: 1.5,
           }}>
-            Optimized allocation based on tuned efficiency and diminishing returns.
+            Optimized allocation: budget share proportional to 3-year average ROAS, with Email ≤ ₹15L and SMS ≤ ₹12L.
           </p>
         </div>
 
@@ -688,7 +688,7 @@ export default function RecommendedMix() {
             Want to understand the reasoning behind this recommendation?
           </p>
           <p style={{ ...T.body, fontSize: 12, marginTop: 5 }}>
-            Why It Works explains the diminishing returns curves, timing effects, and signal quality that drive each channel's allocation.
+            Why It Works shows the ROAS ranking, Email/SMS caps, and the timing patterns in the 3-year history.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>

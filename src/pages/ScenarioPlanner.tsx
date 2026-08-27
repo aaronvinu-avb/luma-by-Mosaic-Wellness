@@ -306,7 +306,7 @@ export default function ScenarioPlanner() {
       <div className="flex items-start gap-2 p-4 rounded-xl mt-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', width: '100%' }}>
         <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
           <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Methodology: </span> 
-          Forecasts use the same channel mix and response curves as Current Mix, with budget scaled by scenario. Market outlook scales revenue and ROAS for stress-testing. Figures are model estimates, not guarantees.
+          Forecasts use allocation × historical average ROAS, the same identity as Current Mix and Recommended Mix. Market outlook can still scale those figures for stress-testing. Figures are model estimates, not guarantees.
         </p>
       </div>
     </div>

@@ -1,24 +1,29 @@
 /**
- * Full recalibration check: baselines → curves → Base-mode optimizer @ ₹50L, 1mo.
- * Uses the same pipeline as the app (generateMockData when API unavailable).
+ * Recalibration check: baselines → ROAS-proportional optimizer @ ₹50L.
  */
 import { describe, expect, it } from 'vitest';
-import { generateMockData, CHANNELS } from '@/lib/mockData';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { CHANNELS, type MarketingRecord } from '@/lib/mockData';
 import {
   computeChannelBaselines,
   computeCurrentMixForecast,
   computeRecommendedMix,
-  computeTimingEffects,
 } from '@/lib/optimizer/calculations';
 
 const MONTHLY_BUDGET = 5_000_000;
 const MODE: 'base' = 'base';
 
+function loadAssignmentData(): MarketingRecord[] {
+  return JSON.parse(
+    readFileSync(resolve(process.cwd(), 'public/data/marketing_daily.json'), 'utf8'),
+  ) as MarketingRecord[];
+}
+
 describe('recalibration check (₹50L, Base, 1mo)', () => {
   it('prints summary table + passes sanity ranges', () => {
-    const records = generateMockData();
+    const records = loadAssignmentData();
     const baselines = computeChannelBaselines(records);
-    const timing = computeTimingEffects(records);
 
     const historicalAllocationPct: Record<string, number> = {};
     baselines.forEach(b => {
@@ -29,7 +34,6 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
       historicalAllocationPct,
       MONTHLY_BUDGET,
       baselines,
-      { timingEffects: timing, planningMonth: 0 },
     );
 
     const recommended = computeRecommendedMix(
@@ -37,7 +41,6 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
       MONTHLY_BUDGET,
       MODE,
       historicalAllocationPct,
-      { timingEffects: timing, planningMonth: 0 },
     );
 
     const recForecast = recommended.forecast;
@@ -81,9 +84,10 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
     expect(Math.abs(recSum - 100)).toBeLessThan(0.02);
     CHANNELS.forEach(ch => {
       const p = recommended.allocationsPct[ch] || 0;
-      expect(p).toBeGreaterThanOrEqual(1.99);
-      expect(p).toBeLessThanOrEqual(35.01);
+      expect(p).toBeGreaterThan(0);
     });
+    expect(recommended.forecast.channels.Email.forecastSpend).toBeLessThanOrEqual(1_500_000);
+    expect(recommended.forecast.channels.SMS.forecastSpend).toBeLessThanOrEqual(1_200_000);
 
     expect(currentForecast.blendedROAS).toBeGreaterThan(3);
     expect(currentForecast.blendedROAS).toBeLessThan(5.01);
@@ -97,17 +101,15 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
   });
 
   it('planning modes produce different recommended allocations (exploration factor)', () => {
-    const records = generateMockData();
+    const records = loadAssignmentData();
     const baselines = computeChannelBaselines(records);
-    const timing = computeTimingEffects(records);
     const historicalAllocationPct: Record<string, number> = {};
     baselines.forEach(b => {
       historicalAllocationPct[b.channel] = b.historicalAllocationPct;
     });
-    const opts = { timingEffects: timing, planningMonth: 0 as number | null };
-    const cons = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'conservative', historicalAllocationPct, opts);
-    const base = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'base', historicalAllocationPct, opts);
-    const agg = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'aggressive', historicalAllocationPct, opts);
+    const cons = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'conservative', historicalAllocationPct);
+    const base = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'base', historicalAllocationPct);
+    const agg = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'aggressive', historicalAllocationPct);
     expect(cons.allocationsPct['Email']).not.toBe(agg.allocationsPct['Email']);
     expect(base.allocationsPct['Email']).toBeGreaterThanOrEqual(cons.allocationsPct['Email'] - 0.01);
     expect(agg.allocationsPct['Email']).toBeGreaterThanOrEqual(base.allocationsPct['Email'] - 0.01);

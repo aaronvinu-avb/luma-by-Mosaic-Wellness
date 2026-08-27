@@ -3,14 +3,13 @@ import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { MiniSparkline } from '@/components/MiniSparkline';
 import { ChannelName } from '@/components/ChannelName';
-import { getChannelSummaries, getChannelSaturationModels, projectRevenue, getTimeFrameMonths } from '@/lib/calculations';
+import { getChannelSummaries } from '@/lib/calculations';
 import { LazySection } from '@/components/LazySection';
 import { ChartSkeleton } from '@/components/ChartSkeleton';
 import { formatINR, formatINRCompact, formatROAS } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import { ArrowUpDown } from 'lucide-react';
 
-const ChannelDiminishingReturnsChart = lazy(() => import('@/components/charts/ChannelDiminishingReturnsChart'));
 const SpendEfficiencyMatrix = lazy(() =>
   import('@/components/SpendEfficiencyMatrix').then((m) => ({ default: m.SpendEfficiencyMatrix })),
 );
@@ -18,7 +17,7 @@ const SpendEfficiencyMatrix = lazy(() =>
 type SortKey = 'channel' | 'totalSpend' | 'totalRevenue' | 'roas' | 'cpa';
 
 export default function ChannelPerformance() {
-  const { data, aggregate, globalAggregate, isLoading } = useMarketingData({ includeGlobalAggregate: true });
+  const { data, aggregate, isLoading } = useMarketingData();
   const [sortKey, setSortKey] = useState<SortKey>('roas');
   const [sortAsc, setSortAsc] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -40,44 +39,6 @@ export default function ChannelPerformance() {
     const start = (currentPage - 1) * pageSize;
     return sorted.slice(start, start + pageSize);
   }, [sorted, currentPage]);
-
-  const models = useMemo(() => (globalAggregate || data) ? getChannelSaturationModels(globalAggregate || data!) : [], [data, globalAggregate]);
-  const modelByChannel = useMemo(() => {
-    const map: Record<string, (typeof models)[number] | undefined> = {};
-    models.forEach((model) => {
-      map[model.channel] = model;
-    });
-    return map;
-  }, [models]);
-  const summaryByChannel = useMemo(() => {
-    const map: Record<string, (typeof summaries)[number] | undefined> = {};
-    summaries.forEach((summary) => {
-      map[summary.channel] = summary;
-    });
-    return map;
-  }, [summaries]);
-  const timeFrameMonths = useMemo(
-    () => getTimeFrameMonths(aggregate || globalAggregate || data || []),
-    [aggregate, globalAggregate, data]
-  );
-
-  const diminishingData = useMemo(() => {
-    const multipliers = [0.5, 1, 1.5, 2, 2.5, 3];
-    return multipliers.map(mult => {
-      const row: Record<string, number | string> = { multiplier: `${mult}x` };
-      for (const s of summaries) {
-        const model = modelByChannel[s.channel];
-        if (model) {
-          const spend = (s.totalSpend / timeFrameMonths) * mult; // Use avg monthly spend for the model
-          const rev = projectRevenue(model, spend);
-          row[s.channel] = spend > 0 ? rev / spend : 0;
-        } else {
-          row[s.channel] = 0;
-        }
-      }
-      return row;
-    });
-  }, [summaries, modelByChannel, timeFrameMonths]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
@@ -193,16 +154,6 @@ export default function ChannelPerformance() {
           </div>
         </div>
       </div>
-
-      <LazySection minHeight={480}>
-        <Suspense fallback={<ChartSkeleton height={520} />}>
-          <ChannelDiminishingReturnsChart
-            diminishingData={diminishingData}
-            summaryByChannel={summaryByChannel}
-            timeFrameMonths={timeFrameMonths}
-          />
-        </Suspense>
-      </LazySection>
 
       <LazySection minHeight={460}>
         <Suspense fallback={<ChartSkeleton height={480} />}>

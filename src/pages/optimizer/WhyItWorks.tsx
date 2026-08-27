@@ -137,26 +137,26 @@ export default function WhyItWorks() {
             {
               step: '01',
               icon: <Activity size={14} color="#60A5FA" />,
-              title: 'Read historical performance',
-              body: 'The optimizer starts with each channel\'s historical spend and revenue. Rather than using raw daily averages, it looks for consistent patterns across months.',
+              title: 'Score each channel by average ROAS',
+              body: 'Average ROAS is total revenue divided by total spend over the full 3-year daily history. Higher ROAS earns a larger claim on the monthly budget.',
             },
             {
               step: '02',
               icon: <Shield size={14} color="#FBBF24" />,
-              title: 'Stabilize noisy signals',
-              body: 'Outlier months, thin data periods, and high-variance channels are moderated using spend-weighted smoothing. The goal is a reliable signal, not a lucky snapshot.',
+              title: 'Allocate ₹50L in proportion to ROAS',
+              body: 'Each channel\'s share equals its average ROAS divided by the sum of all ten ROAS values, times the monthly budget of ₹50,00,000.',
             },
             {
               step: '03',
               icon: <TrendingUp size={14} color="#E8803A" />,
-              title: 'Account for diminishing returns',
-              body: 'As spend on any channel rises, each additional pound returns less. The optimizer maps this curve per channel and finds the allocation where marginal returns are best balanced.',
+              title: 'Enforce Email and SMS caps',
+              body: 'Email cannot exceed ₹15L per month (list size) and SMS cannot exceed ₹12L (phone database). Unused budget is reallocated to uncapped channels by the same ROAS weights.',
             },
             {
               step: '04',
               icon: <Clock size={14} color="#34D399" />,
-              title: 'Apply timing and stability controls',
-              body: 'Seasonality and day-of-week patterns are incorporated where signal is strong enough. Stability controls prevent dramatic reallocations when evidence is limited.',
+              title: 'Forecast revenue as spend × ROAS',
+              body: 'Expected monthly revenue is the sum of allocation × average ROAS for every channel. Weekday and seasonal patterns are shown for context; they do not change the scored forecast.',
             },
           ].map(s => (
             <div key={s.step} style={{ ...CARD, padding: '18px 20px' }}>
@@ -261,9 +261,9 @@ export default function WhyItWorks() {
 
       {/* ── D. Diminishing Returns ────────────────────────────────────────── */}
       <div>
-        <p style={{ ...T.overline, marginBottom: 6 }}>Diminishing returns</p>
+        <p style={{ ...T.overline, marginBottom: 6 }}>Spend vs return in history</p>
         <p style={{ ...T.body, fontSize: 12, marginBottom: 16 }}>
-          Channels near saturation receive less budget — freeing it for channels with stronger marginal return.
+          Monthly spend/ROAS points show how channels behaved historically. The recommended mix itself uses constant average ROAS, not these curves.
         </p>
 
         {/* Key concepts */}

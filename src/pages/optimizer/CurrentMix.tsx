@@ -22,6 +22,7 @@ import { useOptimizerModel } from '@/hooks/useOptimizerModel';
 import { useOptimizer, DEFAULT_MONTHLY_BUDGET } from '@/contexts/OptimizerContext';
 import { formatINRCompact } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
+import { CHANNEL_SPEND_CAPS } from '@/lib/optimizer/calculations';
 import { ChannelName } from '@/components/ChannelName';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -176,6 +177,10 @@ export default function CurrentMix() {
   const dHistPct = dCh ? Math.round((historicalFractions[dCh] || 0) * 100) : 0;
   const dDelta   = dPct - dHistPct;
   const dSpend   = dCh ? safeBudget * (pendingAllocs[dCh] || 0) : 0;
+  const dCap     = dCh ? CHANNEL_SPEND_CAPS[dCh] : undefined;
+  const dMaxPct  = dCap != null && safeBudget > 0
+    ? Math.min(60, Math.floor((dCap / safeBudget) * 1000) / 10)
+    : 60;
   const dConf    = dExpl ? confidenceLabel(dExpl.efficiencyConfidence) : { text: '', color: 'var(--text-muted)' };
 
   return (
@@ -644,8 +649,8 @@ export default function CurrentMix() {
                   </div>
 
                   <Slider
-                    value={[dPct]}
-                    min={0} max={60} step={1}
+                    value={[Math.min(dPct, dMaxPct)]}
+                    min={0} max={dMaxPct} step={0.1}
                     onValueChange={([v]) =>
                       setPendingAllocs(prev => ({ ...prev, [dCh]: v / 100 }))
                     }
@@ -666,7 +671,7 @@ export default function CurrentMix() {
                     >
                       <RotateCcw size={8} /> hist. {dHistPct}%
                     </button>
-                    <span style={{ ...T.body, fontSize: 10 }}>60%</span>
+                    <span style={{ ...T.body, fontSize: 10 }}>{dCap != null ? `cap ${dMaxPct}%` : '60%'}</span>
                   </div>
                 </div>
 
