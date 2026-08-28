@@ -16,13 +16,11 @@ import {
   computeCurrentMixForecast,
   computeRecommendedMix,
 } from '@/lib/optimizer/calculations';
-import { useAppContext } from '@/contexts/AppContext';
 
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
 
 export default function Overview() {
   const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource, boundaries, isDatasetHydrating, fetchError } = useMarketingData({ includeGlobalAggregate: true });
-  const { dateFilter } = useAppContext();
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
 
@@ -41,28 +39,13 @@ export default function Overview() {
   const { yoyGrowth, yoyLabel } = useMemo(() => {
     if (!globalAggregate) return { yoyGrowth: 0, yoyLabel: 'vs prior year' };
 
-    // YoY is only well-defined for a full-year or full-dataset view.
-    const isYearFilter = /^\d{4}$/.test(dateFilter);
-    const supportsYearOverYear = dateFilter === 'all' || isYearFilter;
-    if (!supportsYearOverYear) {
-      return { yoyGrowth: 0, yoyLabel: 'YoY not shown for rolling windows' };
-    }
-
-    // Pick the current year either from the filter or from the dataset.
-    let currentYear: string;
-    if (isYearFilter) {
-      currentYear = dateFilter;
-    } else {
-      const years = Object.keys(globalAggregate.yearlyRevenueMap).map(Number).filter(y => !isNaN(y));
-      if (years.length === 0) return { yoyGrowth: 0, yoyLabel: 'vs prior year' };
-      currentYear = Math.max(...years).toString();
-    }
-
+    const years = Object.keys(globalAggregate.yearlyRevenueMap).map(Number).filter(y => !isNaN(y));
+    if (years.length === 0) return { yoyGrowth: 0, yoyLabel: 'vs prior year' };
+    const currentYear = Math.max(...years).toString();
     const priorYear = (parseInt(currentYear) - 1).toString();
     const revCurrent = globalAggregate.yearlyRevenueMap[currentYear] || 0;
     const revPrior = globalAggregate.yearlyRevenueMap[priorYear] || 0;
 
-    // If the prior year isn't in the dataset, YoY is not meaningful.
     if (revPrior <= 0) {
       return { yoyGrowth: 0, yoyLabel: `No ${priorYear} data to compare` };
     }
@@ -73,7 +56,7 @@ export default function Overview() {
       yoyGrowth: growth,
       yoyLabel: `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% (${currentYear} vs ${priorYear})`
     };
-  }, [globalAggregate, dateFilter]);
+  }, [globalAggregate]);
 
   const timeFrameMonths = useMemo(() => getTimeFrameMonths(aggregate || data || []), [data, aggregate]);
 
@@ -229,10 +212,7 @@ export default function Overview() {
         {/* Left KPI panel */}
         <div className="overview-kpi-panel" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 16, padding: 28, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%', overflow: 'hidden' }}>
           <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>
-            {dateFilter === 'all' ? (boundaries?.fullRangeLabel ?? 'All time') :
-             dateFilter === 'last30' ? 'Last 30 Days' :
-             dateFilter === 'last90' ? 'Last 90 Days' :
-             /^\d{4}$/.test(dateFilter) ? `Year ${dateFilter}` : 'Selected Timeframe'}
+            {boundaries?.fullRangeLabel ?? 'All time'}
           </p>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             {metrics.map((m, i) => (

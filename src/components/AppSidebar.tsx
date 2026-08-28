@@ -3,15 +3,9 @@ import {
   TrendingUp,
   Filter,
   CalendarRange,
-  Wallet,
   DollarSign,
-  Sun,
-  Trophy,
   LayoutDashboard,
   Sliders,
-  Stethoscope,
-  Sparkles,
-  HelpCircle,
 } from "lucide-react";
 import { LumaLogo } from '@/components/LumaLogo';
 import { NavLink } from '@/components/NavLink';
@@ -56,17 +50,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'Strategy',
     items: [
-      { title: 'Scenario Planner', url: '/scenarios', icon: CalendarRange },
-      { title: 'Budget Tracker',   url: '/budget',    icon: Wallet },
-    ],
-  },
-  {
-    label: 'Mix Optimiser',
-    items: [
-      { title: 'Current Mix',     url: '/optimizer/current-mix', icon: Sliders     },
-      { title: 'Diagnosis',       url: '/optimizer/diagnosis',   icon: Stethoscope },
-      { title: 'Recommended Mix', url: '/optimizer/recommended', icon: Sparkles    },
-      { title: 'Why It Works',    url: '/optimizer/why',         icon: HelpCircle  },
+      { title: 'Scenario Planner', url: '/scenarios',  icon: CalendarRange },
+      { title: 'Mix Optimiser',    url: '/optimizer',  icon: Sliders },
     ],
   },
   {
@@ -74,8 +59,6 @@ const navGroups: NavGroup[] = [
     items: [
       { title: 'Financial Insights', url: '/financials',   icon: DollarSign },
       { title: 'Trend Analysis',     url: '/trends',       icon: TrendingUp },
-      { title: 'Daily Digest',       url: '/daily-digest', icon: Sun },
-      { title: 'Best Days',          url: '/best-days',    icon: Trophy },
     ],
   },
 ];

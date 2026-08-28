@@ -1,35 +1,23 @@
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { useLocation } from 'react-router-dom';
-import { useAppContext, DateFilterType } from '@/contexts/AppContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMarketingDatasetQueryOptions } from '@/lib/marketingDataLoader';
 import { computeDataBoundaries } from '@/lib/dataBoundaries';
 
 const PAGE_NAMES: Record<string, string> = {
-  // Measurement
   '/dashboard':  'Overview',
   '/channels':   'Channel Performance',
   '/funnel':     'Traffic Quality Pipeline',
-  // Strategy
   '/scenarios':  'Scenario Planner',
-  '/budget':     'Budget Tracker',
-  // Mix Optimiser
-  '/optimizer/current-mix': 'Current Mix',
-  '/optimizer/diagnosis':   'Diagnosis',
-  '/optimizer/recommended': 'Recommended Mix',
-  '/optimizer/why':         'Why It Works',
-  // Intelligence
+  '/optimizer':  'Mix Optimiser',
   '/trends':       'Trend Analysis',
   '/financials':   'Financial Insights',
-  '/daily-digest': 'Daily Digest',
-  '/best-days':    'Best Days',
 };
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const pageName = PAGE_NAMES[location.pathname] || 'Dashboard';
-  const { dateFilter, setDateFilter } = useAppContext();
   const queryClient = useQueryClient();
   const { data: boundaries } = useQuery({
     ...getMarketingDatasetQueryOptions(queryClient),
@@ -40,16 +28,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
     select: (d) => ({ source: d.source, fetchError: d.fetchError }),
   });
 
-  const allLabel = boundaries ? boundaries.fullRangeLabel : 'All time';
-  const yearOptions = boundaries?.availableYears ?? [];
+  const rangeLabel = boundaries?.fullRangeLabel ?? 'Jan 2023 – Dec 2025';
 
   const statusSource = datasetMeta?.source ?? 'loading';
   const statusLabel =
-    statusSource === 'api' || statusSource === 'cached'
-      ? 'Live · All channels active'
-      : statusSource === 'mock'
-        ? 'Demo data · API unavailable'
-        : 'Loading data…';
+    statusSource === 'mock'
+      ? 'Demo data · not the assignment file'
+      : statusSource === 'loading'
+        ? 'Loading data…'
+        : 'Local 3-year file';
   const statusColor =
     statusSource === 'api' || statusSource === 'cached'
       ? '#7FAF7B'
@@ -73,30 +60,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 {pageName}
               </span>
             </div>
-              <select
-                className="app-header-filter"
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value as DateFilterType)}
+              <div
                 style={{
-                  backgroundColor: 'var(--bg-card)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 6,
-                  padding: '4px 8px',
-                  fontFamily: 'Plus Jakarta Sans',
-                  fontSize: 12,
-                  outline: 'none',
-                  cursor: 'pointer'
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
                 }}
               >
-                <option value="all">{allLabel}</option>
-                <option value="last30">Last 30 Days</option>
-                <option value="last90">Last 90 Days</option>
-                {yearOptions.map((y) => (
-                  <option key={y} value={String(y)}>{y} Only</option>
-                ))}
-              </select>
-
+              <span
+                style={{
+                  fontFamily: 'Plus Jakarta Sans',
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                }}
+              >
+                {rangeLabel}
+              </span>
               <div
                 className="app-header-status flex items-center gap-2"
                 style={{
@@ -113,6 +92,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               >
                 <span className="pulse-dot" style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: statusColor, display: 'inline-block' }} />
                 {statusLabel}
+              </div>
               </div>
           </header>
           <main className="app-main flex-1 overflow-auto" style={{ padding: 32 }}>

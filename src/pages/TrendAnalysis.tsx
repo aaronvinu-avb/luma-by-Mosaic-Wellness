@@ -8,22 +8,18 @@ import { formatINRCompact, formatROAS } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import {
   Trophy,
-  TrendingUp,
   TrendingDown,
   Calendar,
   Sunrise,
   ArrowRightLeft,
   Circle,
   Download,
-  Flame
 } from 'lucide-react';
 import { exportToCSV } from '@/lib/exportData';
 import { LazySection } from '@/components/LazySection';
-import type { SpikeRow } from '@/components/charts/trend/TrendSpikeLineChart';
 import type { TrendMetric } from '@/components/charts/trend/TrendMonthlyMultiLineChart';
 
 const TrendMonthlyMultiLineChart = lazy(() => import('@/components/charts/trend/TrendMonthlyMultiLineChart'));
-const TrendSpikeLineChart = lazy(() => import('@/components/charts/trend/TrendSpikeLineChart'));
 const TrendDowRoasBarChart = lazy(() => import('@/components/charts/trend/TrendDowRoasBarChart'));
 
 type Metric = TrendMetric;
@@ -52,9 +48,6 @@ export default function TrendAnalysis() {
     setSelectedYears(new Set(boundaries.availableYears));
   }, [boundaries, selectedYears]);
   const [selectedSeasonChannel, setSelectedSeasonChannel] = useState<string>(CHANNELS[5]); // Email default
-  const [showCompetitorOverlay, setShowCompetitorOverlay] = useState(false);
-  const [spikePage, setSpikePage] = useState(1);
-  const spikePageSize = 8;
 
   const monthly = useMemo(() => data ? getMonthlyAggregation(data) : {}, [data]);
   const seasonalityMetrics = useMemo(() => data ? getSeasonalityMetrics(data) : [], [data]);
@@ -66,7 +59,12 @@ export default function TrendAnalysis() {
       .filter(([month]) => selectedYears.has(parseInt(month.slice(0, 4))))
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, channels]) => {
-        const row: Record<string, string | number> = { month };
+        const [y, mo] = month.split('-');
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const row: Record<string, string | number> = {
+          month,
+          label: `${monthNames[Number(mo) - 1]} '${y.slice(2)}`,
+        };
         for (const ch of CHANNELS) {
           const c = channels[ch];
           if (!c) { row[ch] = 0; continue; }
@@ -132,55 +130,6 @@ export default function TrendAnalysis() {
       worstDayRoas: 0,
     };
   }, [aggregate]);
-
-  const spikeData = useMemo(() => {
-    if (!data) return { weeklyChart: [] as SpikeRow[], periods: [] as { week: string; revenue: number; avg: number; pctDiff: number; type: 'Spike' | 'Dip' }[], spikeMonth: '' };
-    const dayMap = new Map<string, number>();
-    for (const r of data) dayMap.set(r.date, (dayMap.get(r.date) || 0) + r.revenue);
-    const sorted = Array.from(dayMap.entries()).sort(([a], [b]) => a.localeCompare(b));
-    const weeks: { week: string; revenue: number }[] = [];
-    let i = 0;
-    while (i < sorted.length) {
-      const weekStart = sorted[i][0];
-      let rev = 0;
-      const end = Math.min(i + 7, sorted.length);
-      for (let j = i; j < end; j++) rev += sorted[j][1];
-      weeks.push({ week: weekStart, revenue: rev });
-      i = end;
-    }
-    const periods: { week: string; revenue: number; avg: number; pctDiff: number; type: 'Spike' | 'Dip' }[] = [];
-    const chartRows = weeks.map((w, idx) => {
-      let avg = 0;
-      if (idx >= 4) avg = (weeks[idx - 1].revenue + weeks[idx - 2].revenue + weeks[idx - 3].revenue + weeks[idx - 4].revenue) / 4;
-      const row: SpikeRow = { week: w.week, revenue: w.revenue, avg: idx >= 4 ? avg : null, spike: false, dip: false };
-      if (idx >= 4 && avg > 0) {
-        const pct = ((w.revenue - avg) / avg) * 100;
-        if (w.revenue > avg * 1.3) { row.spike = true; periods.push({ week: w.week, revenue: w.revenue, avg, pctDiff: parseFloat(pct.toFixed(1)), type: 'Spike' }); }
-        else if (w.revenue < avg * 0.7) { row.dip = true; periods.push({ week: w.week, revenue: w.revenue, avg, pctDiff: parseFloat(pct.toFixed(1)), type: 'Dip' }); }
-      }
-      return row;
-    });
-    const monthCount: Record<string, number> = {};
-    for (const p of periods.filter(p => p.type === 'Spike')) { const m = p.week.slice(0, 7); monthCount[m] = (monthCount[m] || 0) + 1; }
-    const spikeMonth = Object.entries(monthCount).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A';
-    return { weeklyChart: chartRows, periods, spikeMonth };
-  }, [data]);
-
-  const spikeAreas = useMemo(() => {
-    const areas: { x1: string; x2: string; type: 'Spike' | 'Dip' }[] = [];
-    const chart = spikeData.weeklyChart;
-    for (let i = 0; i < chart.length; i++) {
-      if (chart[i].spike || chart[i].dip) {
-        areas.push({ x1: chart[i].week, x2: chart[i].week, type: chart[i].spike ? 'Spike' : 'Dip' });
-      }
-    }
-    return areas;
-  }, [spikeData]);
-  const spikePeriodsPage = useMemo(() => {
-    const start = (spikePage - 1) * spikePageSize;
-    return spikeData.periods.slice(start, start + spikePageSize);
-  }, [spikeData.periods, spikePage]);
-  const spikeTotalPages = Math.max(1, Math.ceil(spikeData.periods.length / spikePageSize));
 
   if (isLoading) return <DashboardSkeleton />;
 
@@ -271,40 +220,21 @@ export default function TrendAnalysis() {
             </button>
           ))}
         </div>
-        <button 
-          onClick={() => setShowCompetitorOverlay(!showCompetitorOverlay)}
-          style={{
-            ...pillStyle(showCompetitorOverlay),
-            backgroundColor: showCompetitorOverlay ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-card)',
-            borderColor: showCompetitorOverlay ? 'rgba(239, 68, 68, 0.5)' : 'var(--border-strong)',
-            color: showCompetitorOverlay ? '#EF4444' : 'var(--text-muted)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8
-          }}
-        >
-          <div style={{ 
-            width: 8, 
-            height: 8, 
-            borderRadius: '50%', 
-            backgroundColor: showCompetitorOverlay ? '#EF4444' : '#6B7280',
-            boxShadow: showCompetitorOverlay ? '0 0 8px #EF4444' : 'none'
-          }} />
-          Market Intelligence Overlay
-        </button>
       </div>
 
-      <LazySection minHeight={460} rootMargin="80px 0px">
+      <LazySection minHeight={720} rootMargin="80px 0px">
         <div {...darkCard('70ms')}>
           <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
             Monthly {metric === 'roas' ? 'ROAS' : metric.charAt(0).toUpperCase() + metric.slice(1)} by Channel
           </h2>
+          <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+            X-axis is month. The number on each card is that channel’s ROAS (or spend/revenue) in the last month on screen — not the 3-year average.
+          </p>
           <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
           <Suspense fallback={<ChartSkeleton height={400} />}>
             <TrendMonthlyMultiLineChart
               chartData={chartData}
               metric={metric}
-              showCompetitorOverlay={showCompetitorOverlay}
             />
           </Suspense>
         </div>
@@ -382,77 +312,6 @@ export default function TrendAnalysis() {
             <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 14, fontWeight: 500, color: '#FBBF24' }}>📅 Worst overall day: <strong>{heatmapData.worstDay}</strong> — avg ROAS {formatROAS(heatmapData.worstDayRoas)}</p>
           </div>
         </div>
-      </div>
-      </LazySection>
-
-      <LazySection minHeight={420}>
-      <div {...darkCard('280ms')}>
-        <h2 style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <TrendingUp size={18} style={{ color: '#E8803A' }} />
-          Revenue Spike Detector
-        </h2>
-        <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-secondary)', marginTop: 3 }}>Weekly revenue vs 4-week rolling average</p>
-        <div style={{ borderBottom: '1px solid var(--border-subtle)', margin: '16px 0' }} />
-        <Suspense fallback={<ChartSkeleton height={350} />}>
-          <TrendSpikeLineChart weeklyChart={spikeData.weeklyChart} spikeAreas={spikeAreas} />
-        </Suspense>
-
-        {spikeData.periods.length > 0 && (
-          <div className="overflow-x-auto mt-4">
-            <h3 style={{ fontFamily: 'Outfit', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Detected Periods</h3>
-            <table className="w-full">
-              <thead>
-                <tr style={{ backgroundColor: 'var(--bg-card)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  {['Week', 'Revenue', '4-Week Avg', '% Diff', 'Type'].map(h => (
-                    <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontFamily: 'Outfit', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {spikePeriodsPage.map((p, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '13px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{p.week}</td>
-                    <td style={{ padding: '13px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINRCompact(p.revenue)}</td>
-                    <td style={{ padding: '13px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)' }}>{formatINRCompact(p.avg)}</td>
-                    <td style={{ padding: '13px 16px', fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: p.pctDiff > 0 ? '#34D399' : '#F87171' }}>{p.pctDiff > 0 ? '+' : ''}{p.pctDiff}%</td>
-                    <td style={{ padding: '13px 16px' }}>
-                      <span style={{
-                        backgroundColor: p.type === 'Spike' ? 'rgba(251,191,36,0.12)' : 'rgba(96,165,250,0.12)',
-                        color: p.type === 'Spike' ? '#FBBF24' : '#60A5FA',
-                        borderRadius: 9999, padding: '3px 10px', fontFamily: 'Outfit', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6
-                      }}>
-                        {p.type === 'Spike' ? <Flame size={12} /> : <TrendingDown size={12} />}
-                        {p.type === 'Spike' ? 'Spike' : 'Dip'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="flex items-center justify-between mt-3 px-1">
-              <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>
-                Showing {(spikePage - 1) * spikePageSize + 1}-{Math.min(spikePage * spikePageSize, spikeData.periods.length)} of {spikeData.periods.length}
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setSpikePage((p) => Math.max(1, p - 1))}
-                  disabled={spikePage === 1}
-                  style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: spikePage === 1 ? 0.5 : 1 }}
-                >
-                  Prev
-                </button>
-                <span style={{ fontFamily: 'Outfit', fontSize: 12, color: 'var(--text-secondary)' }}>{spikePage}/{spikeTotalPages}</span>
-                <button
-                  onClick={() => setSpikePage((p) => Math.min(spikeTotalPages, p + 1))}
-                  disabled={spikePage === spikeTotalPages}
-                  style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: spikePage === spikeTotalPages ? 0.5 : 1 }}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
       </LazySection>
 

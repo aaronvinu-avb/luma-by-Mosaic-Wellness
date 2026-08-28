@@ -109,7 +109,7 @@ export default function ScenarioPlanner() {
             Scenario Planner
           </h1>
           <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)', marginTop: 6, maxWidth: 560, lineHeight: 1.5 }}>
-            Scale the monthly budget up or down with the same channel mix as Current Mix. Baseline is that reference budget.
+            Scale the monthly budget with the mix from Mix Optimiser (historical until you apply recommended). Tiers are linear; they do not re-optimise the split.
           </p>
           <div style={{ marginTop: 12, display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-strong)', padding: '8px 12px', borderRadius: 8 }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>

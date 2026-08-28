@@ -64,7 +64,7 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
       );
     }
 
-    console.log('\n=== RECALIBRATION (mock data) ===\n');
+    console.log('\n=== RECALIBRATION (assignment JSON) ===\n');
     console.log('Global inputs: monthlyBudget=₹50L, planningMode=Base, period=1mo (planningMonth=0)');
     console.log(rows.join('\n'));
     console.log('\n--- Portfolio ---');

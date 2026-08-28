@@ -9,7 +9,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/Layout";
 import { LandingPage } from "@/components/LandingPage";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { AppProvider } from "@/contexts/AppContext";
 import { OptimizerProvider } from "@/contexts/OptimizerContext";
 
 // ── Measurement ────────────────────────────────────────────────────────────
@@ -19,19 +18,12 @@ const FunnelAnalysis     = lazy(() => import("@/pages/FunnelAnalysis"));
 
 // ── Strategy ───────────────────────────────────────────────────────────────
 const ScenarioPlanner    = lazy(() => import("@/pages/ScenarioPlanner"));
-const BudgetTracker      = lazy(() => import("@/pages/BudgetTracker"));
 
-// ── Mix Optimiser (4 child pages) ──────────────────────────────────────────
-const CurrentMix         = lazy(() => import("@/pages/optimizer/CurrentMix"));
-const Diagnosis          = lazy(() => import("@/pages/optimizer/Diagnosis"));
-const RecommendedMix     = lazy(() => import("@/pages/optimizer/RecommendedMix"));
-const WhyItWorks         = lazy(() => import("@/pages/optimizer/WhyItWorks"));
+const MixOptimizer       = lazy(() => import("@/pages/MixOptimizer"));
 
 // ── Intelligence ───────────────────────────────────────────────────────────
 const FinancialInsights  = lazy(() => import("@/pages/FinancialInsights"));
 const TrendAnalysis      = lazy(() => import("@/pages/TrendAnalysis"));
-const DailyDigest        = lazy(() => import("@/pages/DailyDigest"));
-const BestDays           = lazy(() => import("@/pages/BestDays"));
 
 const NotFound           = lazy(() => import("@/pages/NotFound"));
 
@@ -47,7 +39,6 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <AppProvider>
           <OptimizerProvider>
             <BrowserRouter>
               <Suspense fallback={<PageFallback />}>
@@ -62,27 +53,26 @@ const App = () => (
 
                   {/* Strategy */}
                   <Route path="/scenarios" element={<Layout><ScenarioPlanner /></Layout>} />
-                  <Route path="/budget"    element={<Layout><BudgetTracker /></Layout>} />
+                  <Route path="/budget"    element={<Navigate to="/dashboard" replace />} />
 
-                  {/* Mix Optimiser — /optimizer redirects to first child page */}
-                  <Route path="/optimizer"             element={<Navigate to="/optimizer/current-mix" replace />} />
-                  <Route path="/optimizer/current-mix" element={<Layout><CurrentMix /></Layout>} />
-                  <Route path="/optimizer/diagnosis"   element={<Layout><Diagnosis /></Layout>} />
-                  <Route path="/optimizer/recommended" element={<Layout><RecommendedMix /></Layout>} />
-                  <Route path="/optimizer/why"         element={<Layout><WhyItWorks /></Layout>} />
+                  {/* Mix Optimiser */}
+                  <Route path="/optimizer" element={<Layout><MixOptimizer /></Layout>} />
+                  <Route path="/optimizer/current-mix" element={<Navigate to="/optimizer" replace />} />
+                  <Route path="/optimizer/diagnosis"   element={<Navigate to="/optimizer" replace />} />
+                  <Route path="/optimizer/recommended" element={<Navigate to="/optimizer" replace />} />
+                  <Route path="/optimizer/why"         element={<Navigate to="/optimizer" replace />} />
 
                   {/* Intelligence */}
                   <Route path="/financials"   element={<Layout><FinancialInsights /></Layout>} />
                   <Route path="/trends"       element={<Layout><TrendAnalysis /></Layout>} />
-                  <Route path="/daily-digest" element={<Layout><DailyDigest /></Layout>} />
-                  <Route path="/best-days"    element={<Layout><BestDays /></Layout>} />
+                  <Route path="/daily-digest" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/best-days"    element={<Navigate to="/dashboard" replace />} />
 
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Suspense>
             </BrowserRouter>
           </OptimizerProvider>
-        </AppProvider>
       </TooltipProvider>
     </QueryClientProvider>
   </ThemeProvider>
