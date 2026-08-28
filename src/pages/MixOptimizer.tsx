@@ -1,9 +1,9 @@
 /**
  * Mix Optimiser — single page.
- * Recommended split of the monthly budget by 3-year average ROAS,
- * with Email ≤ ₹15L and SMS ≤ ₹12L. Revenue = spend × avg ROAS.
+ * Split the monthly budget by equalising marginal ROAS on concave log response curves.
+ * Caps by channel name only: Email ≤ ₹15L, SMS ≤ ₹12L.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -33,6 +33,7 @@ export default function MixOptimizer() {
     isLoading,
     optimizedPlan,
     historicalFractions,
+    historicalMixPlan,
     monthlyBudget,
   } = useOptimizerModel();
 
@@ -53,21 +54,34 @@ export default function MixOptimizer() {
     return CHANNELS.map(ch => {
       const histPct = (historicalFractions[ch] || 0) * 100;
       const rec = optimizedPlan.channels[ch];
+      const hist = historicalMixPlan.channels[ch];
       const recPct = rec?.allocationPct ?? 0;
       const recSpend = rec?.spend ?? 0;
-      const roas = rec?.roas ?? 0;
-      const histSpend = (histPct / 100) * safeBudget;
-      const histRevenue = histSpend * roas;
-      const recRevenue = rec?.revenue ?? recSpend * roas;
+      const histSpend = hist?.spend ?? (histPct / 100) * safeBudget;
+      const avgRoas = rec?.historicalROAS ?? hist?.historicalROAS ?? 0;
+      const histRevenue = hist?.revenue ?? 0;
+      const recRevenue = rec?.revenue ?? 0;
+      const recMarginal = rec?.marginalROAS ?? 0;
       const deltaPct = recPct - histPct;
-      return { ch, histPct, recPct, recSpend, roas, histSpend, histRevenue, recRevenue, deltaPct };
+      return {
+        ch, histPct, recPct, recSpend, histSpend, avgRoas,
+        histRevenue, recRevenue, recMarginal, deltaPct,
+      };
     });
-  }, [historicalFractions, optimizedPlan, safeBudget]);
+  }, [historicalFractions, optimizedPlan, historicalMixPlan, safeBudget]);
 
-  const rows = useMemo(
-    () => [...comparison].sort((a, b) => Math.abs(b.deltaPct) - Math.abs(a.deltaPct)),
-    [comparison],
-  );
+  const rows = comparison;
+
+  const recRevenue = optimizedPlan.totalMonthlyRevenue;
+  const histRevenueTotal = historicalMixPlan.totalMonthlyRevenue;
+  const histRoas = historicalMixPlan.blendedROAS;
+  const upliftPct = histRevenueTotal > 0 ? ((recRevenue - histRevenueTotal) / histRevenueTotal) * 100 : 0;
+  const recommendedActive = sharesMatch(allocations, optimizedPlan.allocationShares);
+  const historicalActive =
+    CHANNELS.every(ch => !(allocations[ch] > 0)) ||
+    sharesMatch(allocations, historicalFractions);
+  const kpiRevenue = recommendedActive ? recRevenue : histRevenueTotal;
+  const kpiRoas = recommendedActive ? optimizedPlan.blendedROAS : histRoas;
 
   const chartData = useMemo(
     () =>
@@ -79,22 +93,11 @@ export default function MixOptimizer() {
     [comparison],
   );
 
-  const recRevenue = optimizedPlan.totalMonthlyRevenue;
-  const histRevenueTotal = comparison.reduce((s, r) => s + r.histRevenue, 0);
-  const histRoas = safeBudget > 0 ? histRevenueTotal / safeBudget : 0;
-  const upliftPct = histRevenueTotal > 0 ? ((recRevenue - histRevenueTotal) / histRevenueTotal) * 100 : 0;
-  const recommendedActive = sharesMatch(allocations, optimizedPlan.allocationShares);
-  const historicalActive =
-    CHANNELS.every(ch => !(allocations[ch] > 0)) ||
-    sharesMatch(allocations, historicalFractions);
-  const kpiRevenue = recommendedActive ? recRevenue : histRevenueTotal;
-  const kpiRoas = recommendedActive ? optimizedPlan.blendedROAS : histRoas;
-
   const applyRecommended = () => {
     setAllocations(normalizeAllocationShares({ ...optimizedPlan.allocationShares }));
     toast({
       title: 'Recommended mix applied',
-      description: 'Scenario Planner now uses this split. Current vs recommended in the table stays historical vs ROAS.',
+      description: 'Scenario Planner now uses this split. Table still compares historical share vs the curve recommendation.',
     });
   };
 
@@ -132,7 +135,7 @@ export default function MixOptimizer() {
             fontFamily: 'Plus Jakarta Sans', fontSize: 13,
             color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.5, maxWidth: 560,
           }}>
-            How to split the monthly budget across 10 channels to maximise expected revenue.
+            How to split the monthly budget so the next rupee earns the same return on every channel — not a flat historical ROAS. Concave log curves, KKT water-fill.
           </p>
         </div>
 
@@ -185,7 +188,7 @@ export default function MixOptimizer() {
             {formatINRCompact(kpiRevenue)}
           </p>
           <p style={{ ...T.body, fontSize: 12, marginTop: 8 }}>
-            {formatINR2(kpiRevenue)} at the {recommendedActive ? 'recommended' : 'historical'} mix
+            {formatINR2(kpiRevenue)} on the fitted curves, {recommendedActive ? 'recommended' : 'historical'} mix of this budget
           </p>
         </div>
         <div style={{ ...CARD, padding: '18px 20px' }}>
@@ -198,12 +201,12 @@ export default function MixOptimizer() {
           </p>
           <p style={{ ...T.body, fontSize: 12, marginTop: 8 }}>
             {recommendedActive
-              ? `vs ${formatROAS(histRoas)} on the historical mix`
-              : `${formatROAS(optimizedPlan.blendedROAS)} if you switch to recommended`}
+              ? `vs ${formatROAS(histRoas)} if this budget kept 3-year spend shares`
+              : `${formatROAS(optimizedPlan.blendedROAS)} on the recommended mix`}
           </p>
         </div>
         <div style={{ ...CARD, padding: '18px 20px' }}>
-          <p style={{ ...T.overline, marginBottom: 8 }}>Uplift vs current mix</p>
+          <p style={{ ...T.overline, marginBottom: 8 }}>Uplift vs historical mix</p>
           <p style={{
             fontFamily: 'Outfit', fontSize: 32, fontWeight: 800, letterSpacing: '-0.04em',
             color: '#34D399', margin: 0, lineHeight: 1.1,
@@ -211,7 +214,7 @@ export default function MixOptimizer() {
             {upliftPct >= 0 ? '+' : ''}{upliftPct.toFixed(1)}%
           </p>
           <p style={{ ...T.body, fontSize: 12, marginTop: 8 }}>
-            {formatINRCompact(recRevenue - histRevenueTotal)} more per month
+            {formatINRCompact(recRevenue - histRevenueTotal)} more per month at the same budget
           </p>
         </div>
       </div>
@@ -228,12 +231,12 @@ export default function MixOptimizer() {
         }}>
           <div>
             <p style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-              Channel allocation
+              {recommendedActive ? 'Recommended vs historical share' : 'Historical mix'}
             </p>
             <p style={{ ...T.body, fontSize: 12, marginTop: 4 }}>
               {recommendedActive
-                ? 'Current = historical spend share. Recommended = proportional to 3-year average ROAS.'
-                : 'Share of spend over the 3-year history. Use recommended mix to see the ROAS split.'}
+                ? 'Historical % is 3-year spend share. Recommended is the water-fill on this monthly budget.'
+                : 'This monthly budget split by 3-year spend share. Avg ROAS is from the 3-year file.'}
             </p>
             {recommendedActive && (
               <p style={{
@@ -291,8 +294,8 @@ export default function MixOptimizer() {
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 {(recommendedActive
-                  ? ['Channel', 'Current', 'Recommended', 'Rec. spend', 'Avg ROAS', 'Expected revenue', 'Change']
-                  : ['Channel', 'Current', 'Spend', 'Avg ROAS', 'Expected revenue']
+                  ? ['Channel', 'Historical', 'Recommended', 'Rec. spend', 'Avg ROAS', 'Marg. ROAS', 'Expected revenue', 'Change']
+                  : ['Channel', 'Share', 'Spend', 'Avg ROAS', 'Expected revenue']
                 ).map(h => (
                   <th
                     key={h}
@@ -316,6 +319,9 @@ export default function MixOptimizer() {
                     ? 'over-scaled'
                     : 'efficient';
                 const status = STATUS_META[statusKey];
+                const cell: CSSProperties = {
+                  ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, color: 'var(--text-secondary)',
+                };
                 return (
                   <tr
                     key={r.ch}
@@ -327,34 +333,32 @@ export default function MixOptimizer() {
                     <td style={{ padding: '12px 16px' }}>
                       <ChannelName channel={r.ch} />
                     </td>
-                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, color: 'var(--text-secondary)' }}>
-                      {r.histPct.toFixed(1)}%
-                    </td>
-                    {recommendedActive && (
-                      <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                        {r.recPct.toFixed(1)}%
-                      </td>
-                    )}
-                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, color: 'var(--text-secondary)' }}>
-                      {formatINRCompact(recommendedActive ? r.recSpend : r.histSpend)}
-                    </td>
-                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, color: 'var(--text-secondary)' }}>
-                      {formatROAS(r.roas)}
-                    </td>
-                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                      {formatINRCompact(recommendedActive ? r.recRevenue : r.histRevenue)}
-                    </td>
-                    {recommendedActive && (
-                      <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <span style={{
-                          fontFamily: 'Outfit', fontSize: 12, fontWeight: 700,
-                          color: r.deltaPct > 0.5 ? '#34D399' : r.deltaPct < -0.5 ? '#F87171' : '#94a3b8',
-                          marginRight: 8,
-                        }}>
-                          {r.deltaPct > 0 ? '+' : ''}{r.deltaPct.toFixed(1)} pp
-                        </span>
-                        <span style={badgeStyle(status.color)}>{status.label}</span>
-                      </td>
+                    {recommendedActive ? (
+                      <>
+                        <td style={cell}>{r.histPct.toFixed(1)}%</td>
+                        <td style={{ ...cell, fontWeight: 700, color: 'var(--text-primary)' }}>{r.recPct.toFixed(1)}%</td>
+                        <td style={cell}>{formatINRCompact(r.recSpend)}</td>
+                        <td style={cell}>{formatROAS(r.avgRoas)}</td>
+                        <td style={cell}>{formatROAS(r.recMarginal)}</td>
+                        <td style={{ ...cell, fontWeight: 700, color: 'var(--text-primary)' }}>{formatINRCompact(r.recRevenue)}</td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <span style={{
+                            fontFamily: 'Outfit', fontSize: 12, fontWeight: 700,
+                            color: r.deltaPct > 0.5 ? '#34D399' : r.deltaPct < -0.5 ? '#F87171' : '#94a3b8',
+                            marginRight: 8,
+                          }}>
+                            {r.deltaPct > 0 ? '+' : ''}{r.deltaPct.toFixed(1)} pp
+                          </span>
+                          <span style={badgeStyle(status.color)}>{status.label}</span>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={cell}>{r.histPct.toFixed(1)}%</td>
+                        <td style={{ ...cell, fontWeight: 700, color: 'var(--text-primary)' }}>{formatINRCompact(r.histSpend)}</td>
+                        <td style={cell}>{formatROAS(r.avgRoas)}</td>
+                        <td style={{ ...cell, fontWeight: 700, color: 'var(--text-primary)' }}>{formatINRCompact(r.histRevenue)}</td>
+                      </>
                     )}
                   </tr>
                 );
@@ -365,18 +369,36 @@ export default function MixOptimizer() {
                 <td style={{ padding: '12px 16px', fontFamily: 'Outfit', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
                   Total
                 </td>
-                <td />
-                {recommendedActive && <td />}
-                <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {formatINRCompact(safeBudget)}
-                </td>
-                <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {formatROAS(recommendedActive ? optimizedPlan.blendedROAS : histRoas)}
-                </td>
-                <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {formatINR2(recommendedActive ? recRevenue : histRevenueTotal)}
-                </td>
-                {recommendedActive && <td />}
+                {recommendedActive ? (
+                  <>
+                    <td />
+                    <td />
+                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                      {formatINRCompact(safeBudget)}
+                    </td>
+                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                      {formatROAS(optimizedPlan.blendedROAS)}
+                    </td>
+                    <td />
+                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                      {formatINRCompact(recRevenue)}
+                    </td>
+                    <td />
+                  </>
+                ) : (
+                  <>
+                    <td />
+                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                      {formatINRCompact(safeBudget)}
+                    </td>
+                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                      {formatROAS(histRoas)}
+                    </td>
+                    <td style={{ ...T.num, padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                      {formatINRCompact(histRevenueTotal)}
+                    </td>
+                  </>
+                )}
               </tr>
             </tfoot>
           </table>
@@ -385,9 +407,9 @@ export default function MixOptimizer() {
 
       <div style={{ ...CARD }}>
         <p style={{ fontFamily: 'Outfit', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>
-          {recommendedActive ? 'Current vs recommended spend' : 'Historical spend'}
+          {recommendedActive ? 'Historical share vs recommended spend' : 'Historical mix spend'}
         </p>
-        <p style={{ ...T.body, fontSize: 12, marginBottom: 12 }}>Monthly spend in ₹ lakh</p>
+        <p style={{ ...T.body, fontSize: 12, marginBottom: 12 }}>Monthly spend in ₹ lakh at the planning budget</p>
         <div style={{ width: '100%', height: 340 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 12, top: 4, bottom: 4 }}>
@@ -420,7 +442,14 @@ export default function MixOptimizer() {
               <Legend
                 wrapperStyle={{ fontFamily: 'Outfit', fontSize: 11, color: 'var(--text-secondary)' }}
               />
-              <Bar dataKey="current" name={recommendedActive ? 'Current' : 'Spend'} fill="rgba(148,163,184,0.55)" radius={[0, 3, 3, 0]} barSize={8} isAnimationActive={false} />
+              <Bar
+                dataKey="current"
+                name={recommendedActive ? 'Historical share' : 'Spend'}
+                fill="rgba(148,163,184,0.55)"
+                radius={[0, 3, 3, 0]}
+                barSize={8}
+                isAnimationActive={false}
+              />
               {recommendedActive && (
                 <Bar dataKey="recommended" name="Recommended" fill="#E8803A" radius={[0, 3, 3, 0]} barSize={8} isAnimationActive={false} />
               )}
@@ -453,13 +482,13 @@ export default function MixOptimizer() {
           <ol style={{
             ...T.body, fontSize: 13, margin: '12px 0 0', paddingLeft: 22, lineHeight: 1.7,
           }}>
-            <li>Average ROAS for each channel is total revenue ÷ total spend over the full 3-year daily history.</li>
-            <li>The monthly budget is split in proportion to those ROAS values.</li>
+            <li>Each channel gets a concave log curve from daily spend vs revenue: revenue = a · ln(1 + spend/b). Convex fits are rejected.</li>
+            <li>Average ROAS is total revenue ÷ total spend over 3 years. Marginal ROAS is the slope of the curve at the recommended spend — the return on the next rupee.</li>
+            <li>The budget is allocated so interior (uncapped, funded) channels share the same marginal ROAS (KKT water-fill). Caps apply only to Email and SMS by name. Channels with intercept below λ can receive ₹0.</li>
             <li>
               Email cannot exceed {formatINRCompact(CHANNEL_SPEND_CAPS.Email)} and SMS cannot exceed {formatINRCompact(CHANNEL_SPEND_CAPS.SMS)}.
-              Unused budget is given to other channels by the same ROAS weights. At ₹50L neither cap binds.
             </li>
-            <li>Expected monthly revenue is the sum of allocation × average ROAS, shown to 2 decimal places.</li>
+            <li>Historical mix spend is this monthly budget × 3-year spend share. It is not the 3-year rupee totals. Expected revenue is the curve at that spend.</li>
           </ol>
         )}
       </button>

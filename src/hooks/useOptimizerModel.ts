@@ -19,6 +19,7 @@ import {
   classifyChannelHealth,
   computeBudgetScenarios,
   CHANNEL_SPEND_CAPS,
+  validateRecommendedAllocation,
   type ChannelBaseline,
   type TimingEffects,
 } from '@/lib/optimizer/calculations';
@@ -69,13 +70,16 @@ function makePlanSummary(
       revenue: c?.forecastRevenue ?? 0,
       periodRevenue: (c?.forecastRevenue ?? 0) * durationMonths,
       roas: c?.forecastROAS ?? 0,
+      historicalROAS: c?.historicalROAS ?? 0,
       marginalROAS: c?.marginalROAS ?? 0,
+      limitedData: c?.limitedData ?? false,
+      limitedJustification: c?.limitedJustification ?? null,
       seasonalityMultiplier: 1,
       dowMultiplier: 1,
       isCapped:
-        CHANNEL_SPEND_CAPS[ch] != null &&
-        (c?.forecastSpend ?? 0) >= CHANNEL_SPEND_CAPS[ch] - 1e-6,
-      capSpend: CHANNEL_SPEND_CAPS[ch] ?? c?.saturationSpend ?? Infinity,
+        Number.isFinite(c?.saturationSpend) &&
+        (c?.forecastSpend ?? 0) >= (c?.saturationSpend ?? Infinity) - 1,
+      capSpend: c?.saturationSpend ?? CHANNEL_SPEND_CAPS[ch] ?? Infinity,
     };
   }
   return {
@@ -235,9 +239,21 @@ export function useOptimizerModel(): OptimizerModelOutput {
     () => makePlanSummary('current', currentForecast, currentAllocationPct, durationMonths),
     [currentForecast, currentAllocationPct, durationMonths],
   );
+  const historicalMixForecast = useMemo(
+    () => computeCurrentMixForecast(toPct(historicalFractions), safeBudget, baselines),
+    [historicalFractions, safeBudget, baselines],
+  );
+  const historicalMixPlan = useMemo(
+    () => makePlanSummary('current', historicalMixForecast, toPct(historicalFractions), durationMonths),
+    [historicalMixForecast, historicalFractions, durationMonths],
+  );
   const optimizedPlan = useMemo(
     () => makePlanSummary('optimized', recommended.forecast, recommended.allocationsPct, durationMonths),
     [recommended, durationMonths],
+  );
+  const mixValidation = useMemo(
+    () => (baselines.length ? validateRecommendedAllocation(safeBudget, baselines, recommended.forecast) : null),
+    [baselines, recommended, safeBudget],
   );
 
   const portfolioROASHistorical = useMemo(() => {
@@ -459,9 +475,11 @@ export function useOptimizerModel(): OptimizerModelOutput {
     scenarioBudgets,
     modeMultiplier: 1,
     historicalFractions,
+    historicalMixPlan,
     portfolioROAS: portfolioROASHistorical,
     currentPlan,
     optimizedPlan,
+    mixValidation,
     diagnosis,
     flaggedChannels,
     overWeightedChannels,
