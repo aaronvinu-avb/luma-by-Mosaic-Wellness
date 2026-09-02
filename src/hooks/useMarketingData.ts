@@ -1,9 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getAggregatedState } from '@/lib/calculations';
-import { useAppContext } from '@/contexts/AppContext';
 import { useMemo, useRef, useEffect } from 'react';
 import { auditMarketingData, logDataQualityReport, type DataQualityReport } from '@/lib/dataQuality';
-import { computeDataBoundaries, subtractDays, type DataBoundaries } from '@/lib/dataBoundaries';
+import { computeDataBoundaries, type DataBoundaries } from '@/lib/dataBoundaries';
 import {
   getMarketingDatasetQueryOptions,
   MARKETING_DATA_QUERY_KEY,
@@ -25,8 +24,6 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
     ...getMarketingDatasetQueryOptions(queryClient),
   });
 
-  const { dateFilter } = useAppContext();
-
   const auditReport: DataQualityReport | null = useMemo(() => {
     if (!query.data?.records) return null;
     return auditMarketingData(query.data.records, query.data.droppedDuringNormalization);
@@ -46,27 +43,7 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
     [query.data],
   );
 
-  const filteredData = useMemo(() => {
-    if (!query.data?.records) return undefined;
-    if (dateFilter === 'all' || !boundaries) return query.data.records;
-
-    if (dateFilter === 'last30' || dateFilter === 'last90') {
-      const windowDays = dateFilter === 'last30' ? 30 : 90;
-      const cutoff = subtractDays(boundaries.latestDate, windowDays - 1);
-      return query.data.records.filter(r => r.date >= cutoff);
-    }
-
-    const yearMatch = /^(\d{4})$/.exec(dateFilter);
-    if (yearMatch) {
-      const year = yearMatch[1];
-      if (!boundaries.availableYears.includes(Number(year))) {
-        return query.data.records;
-      }
-      return query.data.records.filter(r => r.date.startsWith(year));
-    }
-
-    return query.data.records;
-  }, [query.data, dateFilter, boundaries]);
+  const filteredData = query.data?.records;
 
   const globalAggregate = useMemo(() => {
     if (!includeGlobalAggregate) return undefined;
@@ -80,6 +57,7 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
   }, [filteredData]);
 
   const isDatasetHydrating = query.data?.loadState === 'partial';
+  const fetchError = query.data?.fetchError ?? null;
 
   return {
     ...query,
@@ -91,5 +69,6 @@ export function useMarketingData(options: UseMarketingDataOptions = {}) {
     auditReport,
     boundaries,
     isDatasetHydrating,
+    fetchError,
   };
 }

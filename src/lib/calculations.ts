@@ -24,6 +24,7 @@ export interface AggregatedState {
   weeklyMap: Record<string, Record<string, { spend: number; revenue: number }>>; // WeekKey -> Channel -> Metrics
   yearlyRevenueMap: Record<string, number>; // YearKey -> Total Revenue
   dailySeries: Record<string, { date: string; roas: number }[]>; // Channel -> Last N days
+  dailySpendSeries: Record<string, { date: string; spend: number; revenue: number }[]>;
   dowMap: Record<string, { spend: number; revenue: number; count: number }[]>; // Channel -> Day buckets [0..6]
   totalDays: number;
 }
@@ -45,6 +46,7 @@ export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
   const weeklyMap: AggregatedState['weeklyMap'] = {};
   const yearlyRevenueMap: Record<string, number> = {};
   const dailySeries: AggregatedState['dailySeries'] = {};
+  const dailySpendSeries: AggregatedState['dailySpendSeries'] = {};
   const dowMap: AggregatedState['dowMap'] = {};
   const dateSet = new Set<string>();
 
@@ -108,6 +110,8 @@ export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
     // 6. Daily Series for Sparklines
     if (!dailySeries[channel]) dailySeries[channel] = [];
     dailySeries[channel].push({ date, roas: (spend || 0) > 0 ? (revenue || 0) / spend : 0 });
+    if (!dailySpendSeries[channel]) dailySpendSeries[channel] = [];
+    dailySpendSeries[channel].push({ date, spend: spend || 0, revenue: revenue || 0 });
 
     // 7. Timeframe tracking
     dateSet.add(date);
@@ -131,6 +135,9 @@ export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
     if (dailySeries[ch]) {
       dailySeries[ch].sort((a, b) => a.date.localeCompare(b.date));
     }
+    if (dailySpendSeries[ch]) {
+      dailySpendSeries[ch].sort((a, b) => a.date.localeCompare(b.date));
+    }
   }
 
   return {
@@ -139,6 +146,7 @@ export function getAggregatedState(data: MarketingRecord[]): AggregatedState {
     weeklyMap,
     yearlyRevenueMap,
     dailySeries,
+    dailySpendSeries,
     dowMap,
     totalDays: dateSet.size
   };

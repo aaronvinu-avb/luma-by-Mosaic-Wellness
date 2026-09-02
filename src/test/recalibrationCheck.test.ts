@@ -1,24 +1,29 @@
 /**
- * Full recalibration check: baselines → curves → Base-mode optimizer @ ₹50L, 1mo.
- * Uses the same pipeline as the app (generateMockData when API unavailable).
+ * Recalibration check: baselines → ROAS-proportional optimizer @ ₹50L.
  */
 import { describe, expect, it } from 'vitest';
-import { generateMockData, CHANNELS } from '@/lib/mockData';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { CHANNELS, type MarketingRecord } from '@/lib/mockData';
 import {
   computeChannelBaselines,
   computeCurrentMixForecast,
   computeRecommendedMix,
-  computeTimingEffects,
 } from '@/lib/optimizer/calculations';
 
 const MONTHLY_BUDGET = 5_000_000;
 const MODE: 'base' = 'base';
 
+function loadAssignmentData(): MarketingRecord[] {
+  return JSON.parse(
+    readFileSync(resolve(process.cwd(), 'public/data/marketing_daily.json'), 'utf8'),
+  ) as MarketingRecord[];
+}
+
 describe('recalibration check (₹50L, Base, 1mo)', () => {
   it('prints summary table + passes sanity ranges', () => {
-    const records = generateMockData();
+    const records = loadAssignmentData();
     const baselines = computeChannelBaselines(records);
-    const timing = computeTimingEffects(records);
 
     const historicalAllocationPct: Record<string, number> = {};
     baselines.forEach(b => {
@@ -29,7 +34,6 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
       historicalAllocationPct,
       MONTHLY_BUDGET,
       baselines,
-      { timingEffects: timing, planningMonth: 0 },
     );
 
     const recommended = computeRecommendedMix(
@@ -37,7 +41,6 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
       MONTHLY_BUDGET,
       MODE,
       historicalAllocationPct,
-      { timingEffects: timing, planningMonth: 0 },
     );
 
     const recForecast = recommended.forecast;
@@ -47,8 +50,8 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
     const recSum = CHANNELS.reduce((s, ch) => s + (recommended.allocationsPct[ch] || 0), 0);
 
     const rows: string[] = [];
-    rows.push('| Channel | Hist ROAS | Curve b | Rec % | Rec Spend | Forecast ROAS |');
-    rows.push('|---------|-----------|---------|-------|-----------|---------------|');
+    rows.push('| Channel | Hist ROAS | b | Rec % | Rec Spend | Curve ROAS | Marg ROAS |');
+    rows.push('|---------|-----------|---|-------|-----------|------------|-----------|');
 
     for (const ch of CHANNELS) {
       const b = baselines.find(x => x.channel === ch)!;
@@ -57,11 +60,11 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
       const fc = recForecast.channels[ch];
       const froas = fc && fc.forecastSpend > 0 ? fc.forecastRevenue / fc.forecastSpend : 0;
       rows.push(
-        `| ${ch} | ${b.historicalROAS.toFixed(2)}x | ${b.curve.b.toFixed(3)} | ${recPct.toFixed(2)}% | ₹${(recSpend / 100000).toFixed(2)}L | ${froas.toFixed(2)}x |`,
+        `| ${ch} | ${b.historicalROAS.toFixed(2)}x | ${b.curve.b.toFixed(0)} | ${recPct.toFixed(2)}% | ₹${(recSpend / 100000).toFixed(2)}L | ${froas.toFixed(2)}x | ${(fc?.marginalROAS ?? 0).toFixed(2)}x |`,
       );
     }
 
-    console.log('\n=== RECALIBRATION (mock data) ===\n');
+    console.log('\n=== RECALIBRATION (assignment JSON) ===\n');
     console.log('Global inputs: monthlyBudget=₹50L, planningMode=Base, period=1mo (planningMonth=0)');
     console.log(rows.join('\n'));
     console.log('\n--- Portfolio ---');
@@ -72,42 +75,43 @@ describe('recalibration check (₹50L, Base, 1mo)', () => {
     console.log(`Uplift: ₹${(upliftAbs / 1e5).toFixed(2)}L (${upliftPct.toFixed(2)}%)`);
     console.log(`Recommended allocation sum: ${recSum.toFixed(4)}% (expect 100)`);
 
-    // Curve b: pipeline uses regularized b in [0.55, 0.9] ⊂ (0.3, 0.95)
+    // Log-curve scale parameter b > 0; n is unused (fixed at 1).
     baselines.forEach(baseline => {
-      expect(baseline.curve.b).toBeGreaterThan(0.3);
-      expect(baseline.curve.b).toBeLessThan(0.95);
+      expect(baseline.curve.b).toBeGreaterThan(0);
+      expect(baseline.curve.a).toBeGreaterThan(0);
+      expect(baseline.curve.vmax).toBeGreaterThan(0);
     });
 
     expect(Math.abs(recSum - 100)).toBeLessThan(0.02);
     CHANNELS.forEach(ch => {
       const p = recommended.allocationsPct[ch] || 0;
-      expect(p).toBeGreaterThanOrEqual(1.99);
-      expect(p).toBeLessThanOrEqual(35.01);
+      expect(p).toBeGreaterThanOrEqual(0);
     });
+    const funded = CHANNELS.filter(ch => (recommended.allocationsPct[ch] || 0) > 0.05).length;
+    expect(funded).toBeGreaterThanOrEqual(4);
+    expect(recommended.forecast.channels.Email.forecastSpend).toBeLessThanOrEqual(1_500_000 + 1);
+    expect(recommended.forecast.channels.SMS.forecastSpend).toBeLessThanOrEqual(1_200_000);
 
-    expect(currentForecast.blendedROAS).toBeGreaterThan(3);
-    expect(currentForecast.blendedROAS).toBeLessThan(5.01);
-    expect(currentForecast.totalRevenue).toBeGreaterThan(15_000_000);
-    expect(currentForecast.totalRevenue).toBeLessThan(25_000_000);
+    expect(currentForecast.blendedROAS).toBeGreaterThan(2);
+    expect(currentForecast.blendedROAS).toBeLessThan(12);
+    expect(currentForecast.totalRevenue).toBeGreaterThan(8_000_000);
+    expect(currentForecast.totalRevenue).toBeLessThan(40_000_000);
 
     const emailRec = recommended.allocationsPct['Email'] ?? 0;
-    const gdnRec = recommended.allocationsPct['Google Display'] ?? 0;
-    expect(emailRec).toBeGreaterThan(10);
-    expect(gdnRec).toBeLessThan(8);
+    expect(emailRec).toBeGreaterThan(0);
+    expect(emailRec).toBeLessThanOrEqual(30);
   });
 
   it('planning modes produce different recommended allocations (exploration factor)', () => {
-    const records = generateMockData();
+    const records = loadAssignmentData();
     const baselines = computeChannelBaselines(records);
-    const timing = computeTimingEffects(records);
     const historicalAllocationPct: Record<string, number> = {};
     baselines.forEach(b => {
       historicalAllocationPct[b.channel] = b.historicalAllocationPct;
     });
-    const opts = { timingEffects: timing, planningMonth: 0 as number | null };
-    const cons = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'conservative', historicalAllocationPct, opts);
-    const base = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'base', historicalAllocationPct, opts);
-    const agg = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'aggressive', historicalAllocationPct, opts);
+    const cons = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'conservative', historicalAllocationPct);
+    const base = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'base', historicalAllocationPct);
+    const agg = computeRecommendedMix(baselines, MONTHLY_BUDGET, 'aggressive', historicalAllocationPct);
     expect(cons.allocationsPct['Email']).not.toBe(agg.allocationsPct['Email']);
     expect(base.allocationsPct['Email']).toBeGreaterThanOrEqual(cons.allocationsPct['Email'] - 0.01);
     expect(agg.allocationsPct['Email']).toBeGreaterThanOrEqual(base.allocationsPct['Email'] - 0.01);

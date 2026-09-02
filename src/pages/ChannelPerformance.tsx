@@ -1,16 +1,15 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { MiniSparkline } from '@/components/MiniSparkline';
 import { ChannelName } from '@/components/ChannelName';
-import { getChannelSummaries, getChannelSaturationModels, projectRevenue, getTimeFrameMonths } from '@/lib/calculations';
+import { getChannelSummaries } from '@/lib/calculations';
 import { LazySection } from '@/components/LazySection';
 import { ChartSkeleton } from '@/components/ChartSkeleton';
 import { formatINR, formatINRCompact, formatROAS } from '@/lib/formatCurrency';
 import { CHANNELS, CHANNEL_COLORS } from '@/lib/mockData';
 import { ArrowUpDown } from 'lucide-react';
 
-const ChannelDiminishingReturnsChart = lazy(() => import('@/components/charts/ChannelDiminishingReturnsChart'));
 const SpendEfficiencyMatrix = lazy(() =>
   import('@/components/SpendEfficiencyMatrix').then((m) => ({ default: m.SpendEfficiencyMatrix })),
 );
@@ -18,11 +17,9 @@ const SpendEfficiencyMatrix = lazy(() =>
 type SortKey = 'channel' | 'totalSpend' | 'totalRevenue' | 'roas' | 'cpa';
 
 export default function ChannelPerformance() {
-  const { data, aggregate, globalAggregate, isLoading } = useMarketingData({ includeGlobalAggregate: true });
+  const { data, aggregate, isLoading } = useMarketingData();
   const [sortKey, setSortKey] = useState<SortKey>('roas');
   const [sortAsc, setSortAsc] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 6;
 
   const summaries = useMemo(() => (aggregate || data) ? getChannelSummaries(aggregate || data!) : [], [data, aggregate]);
 
@@ -35,60 +32,12 @@ export default function ChannelPerformance() {
     });
     return s;
   }, [summaries, sortKey, sortAsc]);
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const paginatedRows = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return sorted.slice(start, start + pageSize);
-  }, [sorted, currentPage]);
-
-  const models = useMemo(() => (globalAggregate || data) ? getChannelSaturationModels(globalAggregate || data!) : [], [data, globalAggregate]);
-  const modelByChannel = useMemo(() => {
-    const map: Record<string, (typeof models)[number] | undefined> = {};
-    models.forEach((model) => {
-      map[model.channel] = model;
-    });
-    return map;
-  }, [models]);
-  const summaryByChannel = useMemo(() => {
-    const map: Record<string, (typeof summaries)[number] | undefined> = {};
-    summaries.forEach((summary) => {
-      map[summary.channel] = summary;
-    });
-    return map;
-  }, [summaries]);
-  const timeFrameMonths = useMemo(
-    () => getTimeFrameMonths(aggregate || globalAggregate || data || []),
-    [aggregate, globalAggregate, data]
-  );
-
-  const diminishingData = useMemo(() => {
-    const multipliers = [0.5, 1, 1.5, 2, 2.5, 3];
-    return multipliers.map(mult => {
-      const row: Record<string, number | string> = { multiplier: `${mult}x` };
-      for (const s of summaries) {
-        const model = modelByChannel[s.channel];
-        if (model) {
-          const spend = (s.totalSpend / timeFrameMonths) * mult; // Use avg monthly spend for the model
-          const rev = projectRevenue(model, spend);
-          row[s.channel] = spend > 0 ? rev / spend : 0;
-        } else {
-          row[s.channel] = 0;
-        }
-      }
-      return row;
-    });
-  }, [summaries, modelByChannel, timeFrameMonths]);
-
-  useEffect(() => {
-    setCurrentPage((page) => Math.min(page, totalPages));
-  }, [totalPages]);
 
   if (isLoading) return <DashboardSkeleton />;
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortAsc(!sortAsc);
     else { setSortKey(key); setSortAsc(false); }
-    setCurrentPage(1);
   };
 
   const roasBadge = (roas: number) => {
@@ -131,7 +80,7 @@ export default function ChannelPerformance() {
               </tr>
             </thead>
             <tbody>
-              {paginatedRows.map((s, idx) => {
+              {sorted.map((s, idx) => {
                 const badge = roasBadge(s.roas);
                 const rowBg = idx % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent';
                 return (
@@ -172,37 +121,10 @@ export default function ChannelPerformance() {
         </div>
         <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           <span style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 12, color: 'var(--text-muted)' }}>
-            Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, sorted.length)} of {sorted.length}
+            {sorted.length} channels
           </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: currentPage === 1 ? 0.5 : 1 }}
-            >
-              Prev
-            </button>
-            <span style={{ fontFamily: 'Outfit', fontSize: 12, color: 'var(--text-secondary)' }}>{currentPage}/{totalPages}</span>
-            <button
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-              style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', color: 'var(--text-secondary)', opacity: currentPage === totalPages ? 0.5 : 1 }}
-            >
-              Next
-            </button>
-          </div>
         </div>
       </div>
-
-      <LazySection minHeight={480}>
-        <Suspense fallback={<ChartSkeleton height={520} />}>
-          <ChannelDiminishingReturnsChart
-            diminishingData={diminishingData}
-            summaryByChannel={summaryByChannel}
-            timeFrameMonths={timeFrameMonths}
-          />
-        </Suspense>
-      </LazySection>
 
       <LazySection minHeight={460}>
         <Suspense fallback={<ChartSkeleton height={480} />}>

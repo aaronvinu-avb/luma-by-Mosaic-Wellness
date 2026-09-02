@@ -44,13 +44,13 @@ function seededRandom(seed: number): () => number {
 export function generateMockData(): MarketingRecord[] {
   const records: MarketingRecord[] = [];
   const rand = seededRandom(42);
-  const startDate = new Date('2023-01-01');
+  const startDate = new Date(Date.UTC(2023, 0, 1));
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   for (let dayOffset = 0; dayOffset < 1095; dayOffset++) {
     const date = new Date(startDate);
-    date.setDate(date.getDate() + dayOffset);
+    date.setUTCDate(date.getUTCDate() + dayOffset);
     const dateStr = date.toISOString().slice(0, 10);
-    const day_of_week = DOW[date.getDay()];
+    const day_of_week = DOW[date.getUTCDay()];
     for (const channel of CHANNELS) {
       const p = channelProfiles[channel];
       const seasonality = 1 + 0.3 * Math.sin((dayOffset / 365) * 2 * Math.PI);
@@ -71,30 +71,6 @@ export function generateMockData(): MarketingRecord[] {
   }
   return records;
 }
-
-export const COMPETITOR_EVENTS = [
-  {
-    startMonth: '2023-10',
-    endMonth: '2023-11',
-    label: 'Rival "Diwali Blowout" Sale',
-    description: '-18% Blended ROAS dip across Meta & Google driven by competitor flooding the market with 50% off deals.',
-    severity: 'high'
-  },
-  {
-    startMonth: '2024-06',
-    endMonth: '2024-07',
-    label: 'Nykaa Summer Super Saver',
-    description: '-12% ROAS impact. Top-of-funnel channels became 3x more expensive to bid on.',
-    severity: 'medium'
-  },
-  {
-    startMonth: '2025-02',
-    endMonth: '2025-03',
-    label: 'Aggressive New D2C Launch',
-    description: 'New heavily funded startup grabbed aggressive SOV on YouTube & Instagram. Minor temporary dip.',
-    severity: 'medium'
-  }
-];
 
 // High-visibility, brand-aligned channel colour palette (Option 1)
 export const CHANNEL_COLORS = [

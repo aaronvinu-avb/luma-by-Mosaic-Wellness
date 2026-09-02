@@ -250,6 +250,7 @@ export function auditMarketingData(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function logDataQualityReport(report: DataQualityReport): void {
+  if (!import.meta.env.DEV) return;
   const label = '[Luma · Data Audit]';
   // eslint-disable-next-line no-console
   console.groupCollapsed(
@@ -273,6 +274,19 @@ export function logDataQualityReport(report: DataQualityReport): void {
   if (report.globalGapCount > 0) {
     // eslint-disable-next-line no-console
     console.warn(`${label} Portfolio-level date coverage has ${report.globalGapCount} missing day(s) across the full range.`);
+  }
+
+  const lastDate = report.globalDateRange.last;
+  if (lastDate) {
+    const [y, m] = lastDate.split('-').map(Number);
+    const dim = daysInMonth(`${y}-${String(m).padStart(2, '0')}`);
+    const lastDay = Number(lastDate.slice(8, 10));
+    if (lastDay < dim) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `${label} Dataset ends on ${lastDate} but ${y}-${String(m).padStart(2, '0')} has ${dim} days — final calendar day(s) may be missing.`,
+      );
+    }
   }
 
   // Per-channel summary row

@@ -41,7 +41,7 @@ export default function FinancialInsights() {
 
   const cohortData = useMemo(() => {
     // Generate combined cohort data for top 5 channels
-    const targetChannels = financials
+    const targetChannels = [...financials]
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5)
       .map(f => f.channel);
@@ -63,9 +63,9 @@ export default function FinancialInsights() {
           Financial Insights
         </h1>
         <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-          Measuring the bottom-line efficiency of every marketing rupee. 
+          Measuring the bottom-line efficiency of every marketing rupee.
           <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
-            (Note: LTV assumes a 60% gross margin and 3.5x avg purchase frequency per customer)
+            LTV uses assumed 60% gross margin and 3.5× purchase frequency. Cohort curves are simulated, not observed repeats.
           </span>
         </p>
       </div>

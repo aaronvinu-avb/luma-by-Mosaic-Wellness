@@ -78,7 +78,9 @@ export default function FunnelAnalysis() {
         <h1 style={{ fontFamily: 'Outfit', fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em', lineHeight: 1.2 }}>
           Traffic Quality Pipeline
         </h1>
-        <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>Analyze aggregate conversion progression and drop-off barriers across channels</p>
+        <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>
+          Impression → click → conversion → new customer. CTR is almost the same on every channel (~3.2%) in this file — treat funnel shape as directional, not live ads.
+        </p>
         </div>
         <select
           value={selectedChannel}

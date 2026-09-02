@@ -25,6 +25,15 @@ npm run dev
 
 Open the URL shown by Vite (usually `http://localhost:5173`).
 
+## Marketing data API
+
+Luma loads daily marketing rows from JSON. By default it uses the bundled dataset:
+
+- **Default:** `/data/marketing_daily.json` (served from `public/data/`)
+- **Override:** copy `.env.example` to `.env` and set `VITE_MARKETING_API_URL` to a remote paginated API (`?page=1&limit=500`).
+
+If the configured source is unreachable or returns HTML instead of JSON, the app falls back to **demo data** and shows a warning on the Overview page.
+
 ## Quality checks
 
 ```bash

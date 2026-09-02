@@ -17,6 +17,7 @@
  */
 
 import type { MonthPoint, MixChannelEfficiency } from './calculations';
+import type { MixValidationReport } from './optimizer/calculations';
 import type { CalibrationOutput, UpliftConfidence } from './optimizerCalibration';
 import type { PlanningMode, PlanningPeriod } from '@/contexts/OptimizerContext';
 
@@ -34,10 +35,15 @@ export interface ChannelForecastRow {
   revenue: number;
   /** Total revenue forecast across the planning period */
   periodRevenue: number;
-  /** Revenue ÷ spend for this channel in this plan */
+  /** Revenue ÷ spend for this channel in this plan (curve average at this spend). */
   roas: number;
+  /** 3-year average ROAS (total revenue ÷ total spend). */
+  historicalROAS: number;
   /** Concave-model marginal ROAS at this spend level */
   marginalROAS: number;
+  /** True when daily history cannot identify saturation; allocation is data-capped. */
+  limitedData: boolean;
+  limitedJustification: string | null;
   /** Seasonality index for the representative month */
   seasonalityMultiplier: number;
   /** Day-of-week blend for the representative month */
@@ -205,6 +211,8 @@ export interface OptimizerModelOutput {
 
   // ── Historical benchmarks ──────────────────────────────────────────────────
   historicalFractions: Record<string, number>;
+  /** Curve forecast if the ₹50L (or current) budget kept 3-year spend shares. */
+  historicalMixPlan: MixPlanSummary;
   portfolioROAS: number;
 
   // ── Layer C: Current plan (user's manual allocation) ──────────────────────
@@ -212,6 +220,7 @@ export interface OptimizerModelOutput {
 
   // ── Layer D: Optimized plan (model's recommendation) ──────────────────────
   optimizedPlan: MixPlanSummary;
+  mixValidation: MixValidationReport | null;
 
   // ── Layer E: Diagnosis (from current plan, NOT optimized) ─────────────────
   diagnosis: Record<string, ChannelDiagnosis>;

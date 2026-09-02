@@ -3,22 +3,24 @@ import { useMarketingData } from '@/hooks/useMarketingData';
 import { DashboardSkeleton } from '@/components/DashboardSkeleton';
 import { DeferredRender } from '@/components/DeferredRender';
 import { ChannelName } from '@/components/ChannelName';
-import { getChannelSummaries, getMonthlyAggregation, getChannelSaturationModels, getOptimalAllocationNonLinear, projectRevenue, getTimeFrameMonths, getSeasonalityMetrics } from '@/lib/calculations';
+import { getChannelSummaries, getMonthlyAggregation, getTimeFrameMonths } from '@/lib/calculations';
 import { formatINR, formatINRCompact, formatROAS } from '@/lib/formatCurrency';
-import { parseLocalDate } from '@/lib/dataBoundaries';
 import { CHANNELS } from '@/lib/mockData';
 import { MiniSparkline } from '@/components/MiniSparkline';
 import { Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/exportData';
 import { Link } from 'react-router-dom';
-
-import { useAppContext } from '@/contexts/AppContext';
+import { DEFAULT_MONTHLY_BUDGET } from '@/contexts/OptimizerContext';
+import {
+  computeChannelBaselines,
+  computeCurrentMixForecast,
+  computeRecommendedMix,
+} from '@/lib/optimizer/calculations';
 
 const ORBIT_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#2DD4BF', '#E879F9', '#FB923C', '#86EFAC', '#F9A8D4'];
 
 export default function Overview() {
-  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource, boundaries, isDatasetHydrating } = useMarketingData({ includeGlobalAggregate: true });
-  const { dateFilter } = useAppContext();
+  const { data, aggregate, globalAggregate, isLoading, error, refetch, dataSource, boundaries, isDatasetHydrating, fetchError } = useMarketingData({ includeGlobalAggregate: true });
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
 
@@ -37,28 +39,13 @@ export default function Overview() {
   const { yoyGrowth, yoyLabel } = useMemo(() => {
     if (!globalAggregate) return { yoyGrowth: 0, yoyLabel: 'vs prior year' };
 
-    // YoY is only well-defined for a full-year or full-dataset view.
-    const isYearFilter = /^\d{4}$/.test(dateFilter);
-    const supportsYearOverYear = dateFilter === 'all' || isYearFilter;
-    if (!supportsYearOverYear) {
-      return { yoyGrowth: 0, yoyLabel: 'YoY not shown for rolling windows' };
-    }
-
-    // Pick the current year either from the filter or from the dataset.
-    let currentYear: string;
-    if (isYearFilter) {
-      currentYear = dateFilter;
-    } else {
-      const years = Object.keys(globalAggregate.yearlyRevenueMap).map(Number).filter(y => !isNaN(y));
-      if (years.length === 0) return { yoyGrowth: 0, yoyLabel: 'vs prior year' };
-      currentYear = Math.max(...years).toString();
-    }
-
+    const years = Object.keys(globalAggregate.yearlyRevenueMap).map(Number).filter(y => !isNaN(y));
+    if (years.length === 0) return { yoyGrowth: 0, yoyLabel: 'vs prior year' };
+    const currentYear = Math.max(...years).toString();
     const priorYear = (parseInt(currentYear) - 1).toString();
     const revCurrent = globalAggregate.yearlyRevenueMap[currentYear] || 0;
     const revPrior = globalAggregate.yearlyRevenueMap[priorYear] || 0;
 
-    // If the prior year isn't in the dataset, YoY is not meaningful.
     if (revPrior <= 0) {
       return { yoyGrowth: 0, yoyLabel: `No ${priorYear} data to compare` };
     }
@@ -69,46 +56,31 @@ export default function Overview() {
       yoyGrowth: growth,
       yoyLabel: `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% (${currentYear} vs ${priorYear})`
     };
-  }, [globalAggregate, dateFilter]);
-
-  const models = useMemo(() => (globalAggregate || aggregate || data) ? getChannelSaturationModels(globalAggregate || aggregate || data!) : [], [data, aggregate, globalAggregate]);
+  }, [globalAggregate]);
 
   const timeFrameMonths = useMemo(() => getTimeFrameMonths(aggregate || data || []), [data, aggregate]);
 
-  const avgMonthlySpend = totals.spend / (timeFrameMonths || 1);
-
   const opportunityGap = useMemo(() => {
-    if (models.length === 0 || avgMonthlySpend === 0) return 0;
-
-    // Seasonality anchor: the month we're projecting for. We use the month of
-    // the latest AVAILABLE data date (not `Date.now()`), so that a stale
-    // dataset never pulls in an unrelated calendar month's seasonality index.
-    const activeMonth = boundaries
-      ? parseLocalDate(boundaries.latestDate).getMonth()
-      : new Date().getMonth();
-    const seasonality = getSeasonalityMetrics(globalAggregate || data || []);
-    const getMultiplier = (ch: string) => {
-      if (dateFilter !== 'last30') return 1.0;
-      const sea = seasonality.find(s => s.channel === ch);
-      return sea?.monthlyIndex?.[activeMonth] ?? 1.0;
-    };
-
-    // Apples-to-apples baseline: how much does the model project we get for our CURRENT spend allocation?
-    const currentModelRevenue = (summaries || []).reduce((s, chSummary) => {
-      const m = (models || []).find(x => x.channel === chSummary.channel);
-      const chMonthlySpend = (chSummary.totalSpend || 0) / timeFrameMonths;
-      return s + (m ? projectRevenue(m, chMonthlySpend, getMultiplier(chSummary.channel)) : 0);
-    }, 0);
-
-    // Optimal allocation projection
-    const optFractions = getOptimalAllocationNonLinear(models || [], avgMonthlySpend);
-    const optRevenue = CHANNELS.reduce((s, ch) => {
-      const m = (models || []).find(x => x.channel === ch);
-      return s + (m ? projectRevenue(m, (optFractions[ch] || 0) * avgMonthlySpend, getMultiplier(ch)) : 0);
-    }, 0);
-    
-    return Math.max(0, optRevenue - currentModelRevenue);
-  }, [models, avgMonthlySpend, summaries, timeFrameMonths, globalAggregate, data, dateFilter, boundaries]);
+    const source = globalAggregate || aggregate;
+    if (!source) return 0;
+    const baselines = computeChannelBaselines(source);
+    if (baselines.length === 0) return 0;
+    const historicalAllocationPct = Object.fromEntries(
+      baselines.map(b => [b.channel, b.historicalAllocationPct]),
+    ) as Record<string, number>;
+    const current = computeCurrentMixForecast(
+      historicalAllocationPct,
+      DEFAULT_MONTHLY_BUDGET,
+      baselines,
+    );
+    const recommended = computeRecommendedMix(
+      baselines,
+      DEFAULT_MONTHLY_BUDGET,
+      'base',
+      historicalAllocationPct,
+    );
+    return Math.max(0, recommended.forecast.totalRevenue - current.totalRevenue);
+  }, [globalAggregate, aggregate]);
 
   const sorted = useMemo(() =>
     summaries.map((s, i) => ({ ...s, color: ORBIT_COLORS[i], origIdx: i }))
@@ -210,6 +182,28 @@ export default function Overview() {
           Export CSV
         </button>
       </div>
+      {dataSource === 'mock' && fetchError && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: 16,
+            padding: '12px 16px',
+            borderRadius: 10,
+            border: '1px solid rgba(251, 191, 36, 0.35)',
+            backgroundColor: 'rgba(251, 191, 36, 0.08)',
+            fontFamily: 'Plus Jakarta Sans',
+            fontSize: 13,
+            color: 'var(--text-primary)',
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ display: 'block', marginBottom: 4, color: '#FBBF24' }}>Live API unavailable — showing demo data</strong>
+          {fetchError}
+          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+            Set <code style={{ fontSize: 11 }}>VITE_MARKETING_API_URL</code> in <code style={{ fontSize: 11 }}>.env</code> to point at a working JSON endpoint (see <code style={{ fontSize: 11 }}>.env.example</code>).
+          </span>
+        </div>
+      )}
       <div style={{ borderBottom: '1px solid var(--border-subtle)', marginBottom: 20 }} />
 
       {/* Main grid */}
@@ -218,10 +212,7 @@ export default function Overview() {
         {/* Left KPI panel */}
         <div className="overview-kpi-panel" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 16, padding: 28, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%', overflow: 'hidden' }}>
           <p style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 11, color: 'var(--text-muted)' }}>
-            {dateFilter === 'all' ? (boundaries?.fullRangeLabel ?? 'All time') :
-             dateFilter === 'last30' ? 'Last 30 Days' :
-             dateFilter === 'last90' ? 'Last 90 Days' :
-             /^\d{4}$/.test(dateFilter) ? `Year ${dateFilter}` : 'Selected Timeframe'}
+            {boundaries?.fullRangeLabel ?? 'All time'}
           </p>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             {metrics.map((m, i) => (
